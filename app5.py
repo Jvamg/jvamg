@@ -2,9 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.utils import to_categorical
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Dropout
+from keras.utils import to_categorical
 
 # --- ESTÁGIO 1: GERAÇÃO DE DADOS SINTÉTICOS ---
 
