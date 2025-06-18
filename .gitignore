@@ -1,1 +1,50 @@
-.venv
+# Arquivo .gitignore para um projeto de Python com IA e Análise de Dados
+
+# 1. Ambientes Virtuais
+# A pasta do ambiente virtual nunca deve ser versionada.
+# Ela contém milhares de arquivos e pode ser recriada com o requirements.txt.
+.venv/
+venv/
+env/
+ENV/
+
+# 2. Arquivos de Cache e Compilados do Python
+# Gerados automaticamente para otimizar a performance. Não são código-fonte.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Datasets grandes não devem estar no Git. Use um placeholder ou DVC.
+# Descomente a linha abaixo se você tiver uma pasta de dados grande.
+# data/
+
+# 3. Arquivos de IDEs e Editores
+# Configurações específicas do seu computador e da sua IDE. Ignorar evita conflitos em equipe.
+.idea/ # Para PyCharm
+.vscode/ # Para VS Code (a não ser que você queira compartilhar configurações específicas)
+*.sublime-project
+*.sublime-workspace
+
+# 4. Arquivos de Sistema Operacional
+# Lixo gerado pelo macOS, Windows e Linux.
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 5. Arquivos de Log e Outputs Temporários
+# Logs e arquivos gerados durante a execução não devem ser versionados.
+*.log
+*.tmp
+*.temp
+*.png # Ignora imagens PNG, caso seu código gere gráficos como output
+
+# 6. Arquivos de Configuração de Segurança (MUITO IMPORTANTE)
+# NUNCA versione arquivos que contenham senhas, tokens ou chaves de API.
+# É uma prática comum colocar segredos em um arquivo .env.
+.env
+.env.*
+secrets.yaml
+
+# 7. Arquivos de Dependências do Jupyter Notebook
+.ipynb_checkpoints
