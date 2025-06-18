@@ -21,8 +21,9 @@ __pycache__/
 
 # 3. Arquivos de IDEs e Editores
 # Configurações específicas do seu computador e da sua IDE. Ignorar evita conflitos em equipe.
-.idea/ # Para PyCharm
-.vscode/ # Para VS Code (a não ser que você queira compartilhar configurações específicas)
+.idea/
+.vscode/
+.vscode
 *.sublime-project
 *.sublime-workspace
 
