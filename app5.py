@@ -6,6 +6,7 @@ from tensorflow import keras
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
 from keras.utils import to_categorical
+from keras.callbacks import ModelCheckpoint
 
 # --- ESTÁGIO 1: GERAÇÃO DE DADOS SINTÉTICOS ---
 
@@ -114,6 +115,17 @@ model = Sequential([
 ])
 
 model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+# ... (logo após model.compile(...))
+
+print("\nConfigurando o Checkpoint para salvar o melhor modelo...")
+# Este callback vai monitorar a acurácia de validação e salvar APENAS o melhor modelo
+checkpoint_callback = ModelCheckpoint(
+    filepath="melhor_modelo.keras",      # Nome do arquivo para salvar o melhor modelo
+    monitor="val_accuracy",             # Métrica a ser monitorada (a do conjunto de teste/validação)
+    save_best_only=True,                # ESSENCIAL: Salva apenas se for o melhor resultado até agora
+    mode="max",                         # Queremos maximizar a acurácia (se fosse loss, seria "min")
+    verbose=1                           # Mostra uma mensagem quando o modelo é salvo
+)
 model.summary()
 
 # --- ESTÁGIO 4: TREINAMENTO DO MODELO ---
@@ -123,6 +135,7 @@ history = model.fit(
     epochs=20,
     batch_size=32,
     validation_data=(X_test, y_test),
+    callbacks=[checkpoint_callback],  # <--- ADICIONE ESTA LINHA
     verbose=1
 )
 

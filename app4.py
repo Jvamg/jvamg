@@ -5,7 +5,7 @@ import ccxt
 import tensorflow as tf
 from openai import OpenAI
 
-MODEL_FILE_PATH = 'meu_modelo_de_padroes.keras'
+MODEL_FILE_PATH = 'melhor_modelo.keras'
 
 # --- CONFIGURAÇÃO E CARREGAMENTO INICIAL (sem alterações) ---
 try:
