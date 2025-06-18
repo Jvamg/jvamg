@@ -9,11 +9,13 @@ import matplotlib.pyplot as plt
 
 # --- CONFIGURAÇÃO E CARREGAMENTO INICIAL ---
 
+# Define o nome do arquivo do modelo como uma constante para facilitar a manutenção e consistência
+MODEL_FILE_PATH = 'meu_modelo_de_padroes.keras'
+
 # Carregando o cérebro do nosso analista especialista uma única vez
-# --- CONFIGURAÇÃO E CARREGAMENTO INICIAL ---
 try:
-    MODELO_DE_PADROES = tf.keras.models.load_model('meu_modelo_de_padroes.keras')
-    # ATUALIZE ESTE DICIONÁRIO PARA CONTER OS 5 PADRÕES
+    MODELO_DE_PADROES = tf.keras.models.load_model(MODEL_FILE_PATH)
+    # O MAPA_ETIQUETAS já está atualizado para 5 padrões, o que é bom.
     MAPA_ETIQUETAS = {
         0: 'Ombro-Cabeça-Ombro',
         1: 'Topo Duplo',
@@ -23,8 +25,9 @@ try:
     }
     print("🧠 Modelo de reconhecimento de padrões carregado com sucesso.")
 except Exception as e:
-    print("🚨 Erro Crítico: Não foi possível carregar o arquivo 'meu_modelo_de_padroes.keras'.")
-    print("Certifique-se de que o modelo foi treinado e o arquivo está na mesma pasta.")
+    print(f"🚨 Erro Crítico: Não foi possível carregar o arquivo do modelo '{MODEL_FILE_PATH}'.")
+    print(f"   Erro específico: {e}") # Adiciona mais detalhes sobre o erro para facilitar o debug
+    print(f"Certifique-se de que o modelo foi treinado e o arquivo '{MODEL_FILE_PATH}' está na mesma pasta que este script.")
     exit()
 
 # Configuração do cliente do OpenRouter
