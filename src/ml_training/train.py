@@ -1,5 +1,7 @@
+import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import yfinance as yf
+from scipy.signal import resample
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 from tensorflow import keras
@@ -7,143 +9,172 @@ from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
 from keras.utils import to_categorical
 from keras.callbacks import ModelCheckpoint
+from keras.optimizers import Adam
 
-# --- ESTÁGIO 1: GERAÇÃO DE DADOS SINTÉTICOS ---
+# --- PARÂMETROS GERAIS ---
+ARQUIVO_ETIQUETAS_REAIS = 'dataset_verificado.csv'
+TAMANHO_JANELA_FIXO = 100
+NUM_CLASSES = 5  # OCO/OCOI, Topo Duplo, Sem Padrão, Bandeira de Alta, Bandeira de Baixa
+mapa_etiquetas_str_para_int = {
+    'OCO': 0, 'Ombro-Cabeça-Ombro': 0, 'OCOI': 0,
+    'TopoDuplo': 1, 'Topo Duplo': 1,
+    'Sem Padrão': 2,
+    'Bandeira de Alta': 3,
+    'Bandeira de Baixa': 4
+}
+
+# ======================================================================
+# === FASE 1: PRÉ-TREINAMENTO COM DADOS SINTÉTICOS ("O SIMULADOR") ===
+# ======================================================================
+
+# --- Funções de Geração de Dados Sintéticos (como antes) ---
+
 
 def gerar_head_and_shoulders(pontos=100):
-    p1 = np.linspace(1, 1.5, pontos // 5)
-    p2 = np.linspace(1.5, 1.2, pontos // 5)
-    p3 = np.linspace(1.2, 1.8, pontos // 5)
-    p4 = np.linspace(1.8, 1.3, pontos // 5)
-    p5 = np.linspace(1.3, 1.6, pontos // 5)
-    padrao = np.concatenate([p1, p2, p3, p4, p5])
-    ruido = np.random.normal(0, 0.05, pontos)
-    return padrao + ruido
+    p1 = np.linspace(1, 1.5, pontos//5)
+    p2 = np.linspace(1.5, 1.2, pontos//5)
+    p3 = np.linspace(1.2, 1.8, pontos//5)
+    p4 = np.linspace(1.8, 1.3, pontos//5)
+    p5 = np.linspace(1.3, 1.6, pontos//5)
+    return np.concatenate([p1, p2, p3, p4, p5]) + np.random.normal(0, 0.05, pontos)
+
 
 def gerar_double_top(pontos=100):
-    p1 = np.linspace(1, 1.6, pontos // 5)
-    p2 = np.linspace(1.6, 1.2, pontos // 5)
-    p3 = np.linspace(1.2, 1.6, pontos // 5)
-    p4 = np.linspace(1.6, 1.0, pontos // 5)
-    p5 = np.linspace(1.0, 1.3, pontos // 5)
-    padrao = np.concatenate([p1, p2, p3, p4, p5])
-    ruido = np.random.normal(0, 0.05, pontos)
-    return padrao + ruido
+    p1 = np.linspace(1, 1.6, pontos//5)
+    p2 = np.linspace(1.6, 1.2, pontos//5)
+    p3 = np.linspace(1.2, 1.6, pontos//5)
+    p4 = np.linspace(1.6, 1.0, pontos//5)
+    p5 = np.linspace(1.0, 1.3, pontos//5)
+    return np.concatenate([p1, p2, p3, p4, p5]) + np.random.normal(0, 0.05, pontos)
+
 
 def gerar_no_pattern(pontos=100):
-    return np.random.randn(pontos).cumsum() / 10 + 1.5
+    return np.random.randn(pontos).cumsum()/10+1.5
 
-# --- NOVAS FUNÇÕES PARA GERAR BANDEIRAS ---
+
 def gerar_bull_flag(pontos=100):
-    # Bandeira de Alta: Mastro de subida, seguido de uma pequena consolidação para baixo
-    mastro = np.linspace(1.0, 2.0, pontos // 2)
-    bandeira = np.linspace(2.0, 1.8, pontos // 2)
-    padrao = np.concatenate([mastro, bandeira])
-    ruido = np.random.normal(0, 0.05, pontos)
-    return padrao + ruido
+    mastro = np.linspace(1.0, 2.0, pontos//2)
+    bandeira = np.linspace(2.0, 1.8, pontos//2)
+    return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
+
 
 def gerar_bear_flag(pontos=100):
-    # Bandeira de Baixa: Mastro de descida, seguido de uma pequena consolidação para cima
-    mastro = np.linspace(2.0, 1.0, pontos // 2)
-    bandeira = np.linspace(1.0, 1.2, pontos // 2)
-    padrao = np.concatenate([mastro, bandeira])
-    ruido = np.random.normal(0, 0.05, pontos)
-    return padrao + ruido
-
-# Visualizando todos os padrões que criamos
-plt.figure(figsize=(15, 6))
-plt.subplot(2, 3, 1); plt.plot(gerar_head_and_shoulders()); plt.title("Ombro-Cabeça-Ombro")
-plt.subplot(2, 3, 2); plt.plot(gerar_double_top()); plt.title("Topo Duplo")
-plt.subplot(2, 3, 3); plt.plot(gerar_no_pattern()); plt.title("Sem Padrão")
-plt.subplot(2, 3, 4); plt.plot(gerar_bull_flag()); plt.title("Bandeira de Alta")
-plt.subplot(2, 3, 5); plt.plot(gerar_bear_flag()); plt.title("Bandeira de Baixa")
-plt.tight_layout()
-plt.show()
-
-# --- ESTÁGIO 2: PREPARAÇÃO DO DATASET (ATUALIZADO) ---
-
-X = []
-y = []
-# Mapeamento de etiquetas atualizado para 5 classes
-mapa_etiquetas = {
-    0: 'Ombro-Cabeça-Ombro',
-    1: 'Topo Duplo',
-    2: 'Sem Padrão',
-    3: 'Bandeira de Alta',
-    4: 'Bandeira de Baixa'
-}
-num_classes = len(mapa_etiquetas) # Agora são 5 classes
-
-num_amostras_por_classe = 500
-
-print("\nGerando dataset de treinamento com 5 padrões...")
-for _ in range(num_amostras_por_classe):
-    X.append(gerar_head_and_shoulders())
-    y.append(0)
-    X.append(gerar_double_top())
-    y.append(1)
-    X.append(gerar_no_pattern())
-    y.append(2)
-    # Adicionando os novos padrões ao dataset
-    X.append(gerar_bull_flag())
-    y.append(3)
-    X.append(gerar_bear_flag())
-    y.append(4)
-
-X = np.array(X)
-y = np.array(y)
-
-X = X.reshape(X.shape[0], X.shape[1], 1)
-# One-Hot Encoding de y atualizado para 5 classes
-y = to_categorical(y, num_classes=num_classes)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-print(f"Dataset pronto: {X_train.shape[0]} amostras de treino, {X_test.shape[0]} amostras de teste.")
+    mastro = np.linspace(2.0, 1.0, pontos//2)
+    bandeira = np.linspace(1.0, 1.2, pontos//2)
+    return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
 
 
-# --- ESTÁGIO 3: CONSTRUÇÃO DO MODELO (ATUALIZADO) ---
+# --- Montagem do Dataset Sintético ---
+X_sintetico, y_sintetico = [], []
+num_amostras_sinteticas = 1000  # Geramos bastante dados sintéticos
+print(
+    f"FASE 1: Gerando {num_amostras_sinteticas * NUM_CLASSES} amostras de dados sintéticos...")
+for _ in range(num_amostras_sinteticas):
+    X_sintetico.append(gerar_head_and_shoulders())
+    y_sintetico.append(0)
+    X_sintetico.append(gerar_double_top())
+    y_sintetico.append(1)
+    X_sintetico.append(gerar_no_pattern())
+    y_sintetico.append(2)
+    X_sintetico.append(gerar_bull_flag())
+    y_sintetico.append(3)
+    X_sintetico.append(gerar_bear_flag())
+    y_sintetico.append(4)
 
-print("\nConstruindo o modelo LSTM para 5 padrões...")
+X_sintetico = np.array(X_sintetico).reshape(-1, TAMANHO_JANELA_FIXO, 1)
+y_sintetico = to_categorical(y_sintetico, num_classes=NUM_CLASSES)
+
+# --- Construção do Modelo ---
+print("\nConstruindo a arquitetura do modelo LSTM...")
 model = Sequential([
-    LSTM(units=50, input_shape=(X_train.shape[1], X_train.shape[2]), return_sequences=True),
+    LSTM(units=50, input_shape=(TAMANHO_JANELA_FIXO, 1), return_sequences=True),
     Dropout(0.2),
     LSTM(units=50),
     Dropout(0.2),
     Dense(units=32, activation='relu'),
-    # A CAMADA DE SAÍDA AGORA TEM 5 NEURÔNIOS, UM PARA CADA PADRÃO
-    Dense(units=num_classes, activation='softmax')
+    Dense(units=NUM_CLASSES, activation='softmax')
 ])
-
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-# ... (logo após model.compile(...))
-
-print("\nConfigurando o Checkpoint para salvar o melhor modelo...")
-# Este callback vai monitorar a acurácia de validação e salvar APENAS o melhor modelo
-checkpoint_callback = ModelCheckpoint(
-    filepath="melhor_modelo.keras",      # Nome do arquivo para salvar o melhor modelo
-    monitor="val_accuracy",             # Métrica a ser monitorada (a do conjunto de teste/validação)
-    save_best_only=True,                # ESSENCIAL: Salva apenas se for o melhor resultado até agora
-    mode="max",                         # Queremos maximizar a acurácia (se fosse loss, seria "min")
-    verbose=1                           # Mostra uma mensagem quando o modelo é salvo
-)
+model.compile(optimizer='adam', loss='categorical_crossentropy',
+              metrics=['accuracy'])
 model.summary()
 
-# --- ESTÁGIO 4: TREINAMENTO DO MODELO ---
-print("\nIniciando o treinamento do novo modelo...")
-history = model.fit(
-    X_train, y_train,
-    epochs=20,
-    batch_size=32,
-    validation_data=(X_test, y_test),
-    callbacks=[checkpoint_callback],  # <--- ADICIONE ESTA LINHA
+# --- Treinamento Base ---
+print("\nIniciando pré-treinamento com dados sintéticos...")
+model.fit(X_sintetico, y_sintetico, epochs=15,
+          batch_size=32, validation_split=0.1, verbose=1)
+print("✅ Pré-treinamento concluído. O modelo agora tem um conhecimento base.")
+
+
+# ======================================================================
+# === FASE 2: AJUSTE FINO COM DADOS REAIS ("AS HORAS DE VOO REAIS") ===
+# ======================================================================
+
+# --- Carregar e Processar os Dados Reais ---
+print(
+    f"\nFASE 2: Carregando etiquetas do arquivo real '{ARQUIVO_ETIQUETAS_REAIS}' para o ajuste fino...")
+try:
+    df_etiquetas_reais = pd.read_csv(ARQUIVO_ETIQUETAS_REAIS, parse_dates=[
+                                     'data_inicio', 'data_fim'])
+except Exception as e:
+    print(f"Não foi possível ler o arquivo de dados reais: {e}")
+    exit()
+
+X_real, y_real = [], []
+print("Processando dados reais...")
+for index, linha in df_etiquetas_reais.iterrows():
+    try:
+        dados_janela = yf.download(
+            tickers='BTC-USD', start=linha['data_inicio'], end=linha['data_fim'], interval='4h')
+        if not dados_janela.empty:
+            precos = dados_janela['Close'].values
+            janela_reamostrada = resample(precos, TAMANHO_JANELA_FIXO)
+            min_val, max_val = np.min(
+                janela_reamostrada), np.max(janela_reamostrada)
+            janela_normalizada = (janela_reamostrada - min_val) / (max_val - min_val) if (
+                max_val - min_val) > 0 else np.zeros(TAMANHO_JANELA_FIXO)
+            X_real.append(janela_normalizada)
+            y_real.append(mapa_etiquetas_str_para_int[linha['tipo_padrao']])
+    except Exception as e:
+        print(f"Erro ao processar linha {index} dos dados reais: {e}")
+
+if not X_real:
+    print("\nNenhum dado real foi processado para o ajuste fino. Salvando o modelo pré-treinado.")
+    model.save('modelo_apenas_sintetico.keras')
+    exit()
+
+X_real = np.array(X_real).reshape(-1, TAMANHO_JANELA_FIXO, 1)
+y_real = to_categorical(y_real, num_classes=NUM_CLASSES)
+X_train_real, X_test_real, y_train_real, y_test_real = train_test_split(
+    X_real, y_real, test_size=0.2, random_state=42)
+
+# --- A Mágica do Fine-Tuning ---
+# Re-compilamos o modelo com uma TAXA DE APRENDIZAGEM MUITO BAIXA
+taxa_aprendizagem_baixa = 0.0001
+print(
+    f"\nRe-compilando o modelo para o ajuste fino com learning rate de {taxa_aprendizagem_baixa}...")
+model.compile(
+    optimizer=Adam(learning_rate=taxa_aprendizagem_baixa),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Configuramos o Checkpoint para salvar o MELHOR modelo durante o ajuste fino
+checkpoint_callback_ft = ModelCheckpoint(
+    filepath="data\models\melhor_modelo.keras",  # Nome do arquivo final
+    monitor="val_accuracy",
+    save_best_only=True,
+    mode="max",
     verbose=1
 )
 
-# --- ESTÁGIO 5: AVALIAÇÃO E SALVAMENTO ---
-print("\nIniciando a avaliação final...")
-loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
-print(f'\nAcurácia no conjunto de teste: {accuracy * 100:.2f}%')
+print("\nIniciando o ajuste fino com dados reais...")
+model.fit(
+    X_train_real, y_train_real,
+    epochs=40,  # Mais épocas podem ser úteis no ajuste fino com poucos dados
+    batch_size=8,  # Lotes menores também podem ajudar
+    validation_data=(X_test_real, y_test_real),
+    callbacks=[checkpoint_callback_ft],
+    verbose=1
+)
 
-print("\nSalvando o novo modelo treinado...")
-model.save('meu_modelo_de_padroes.keras')
-print("✅ Novo modelo salvo com sucesso!")
+print("\n✅ Treinamento e ajuste fino concluídos! O modelo especialista está salvo como 'modelo_final_ajustado.keras'.")
