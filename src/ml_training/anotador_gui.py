@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
 import yfinance as yf
-# A importação do mplfinance e do backend do Tkinter são essenciais
 import mplfinance as mpf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 

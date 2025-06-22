@@ -6,3 +6,4 @@ matplotlib
 mplfinance
 ccxt
 openai
+yfinance
