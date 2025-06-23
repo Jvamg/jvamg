@@ -239,7 +239,7 @@ class AnotadorApp:
 
 
 if __name__ == '__main__':
-    ARQUIVO_CANDIDATOS = 'todos_os_padroes_btc_automatico.csv'
+    ARQUIVO_CANDIDATOS = 'data/4h/0.005_90_0.96_0.97.csv'
     ARQUIVO_SAIDA_VERIFICADO = 'dataset_verificado.csv'
 
     root = tk.Tk()

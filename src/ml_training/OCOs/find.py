@@ -23,15 +23,15 @@ print("Dados de 4 horas carregados com sucesso.")
 
 # ==> OS PARÂMETROS PRINCIPAIS PARA AJUSTE <==
 # Proeminência como porcentagem do preço médio para ser adaptável.
-PROMINENCE_PERCENTUAL = 0.003  # Ex: 0.015 = 1.5%
+PROMINENCE_PERCENTUAL = 0.002  # Ex: 0.015 = 1.5%
 # Duração máxima do padrão em número de velas.
-MAX_VELAS_PADRAO = 80
+MAX_VELAS_PADRAO = 150
 # Regra de dominância da cabeça: ombro deve ter no máx 98% da altura da cabeça.
-HEAD_SHOULDER_RATIO_THRESHOLD = 0.99
+HEAD_SHOULDER_RATIO_THRESHOLD = 0.995
 # Regra de simetria dos ombros: ombro menor deve ter no min 95% da altura do maior.
-SYMMETRY_THRESHOLD = 0.95
+SYMMETRY_THRESHOLD = 0.9
 # Janela da Média Móvel para suavização dos preços.
-WINDOW_SMA = 5
+WINDOW_SMA = 3
 
 # 1. CALCULAR A MÉDIA MÓVEL
 print(f"Suavizando os dados com uma Média Móvel de {WINDOW_SMA} períodos...")
@@ -164,7 +164,7 @@ if lista_de_padroes:
     # Ordena os resultados por data para que os mais recentes apareçam primeiro no CSV
     df_resultados.sort_values(by='data_inicio', ascending=False, inplace=True)
 
-    nome_arquivo_saida = 'todos_os_padroes_btc_automatico.csv'
+    nome_arquivo_saida = f'data/4h/{PROMINENCE_PERCENTUAL}_{MAX_VELAS_PADRAO}_{HEAD_SHOULDER_RATIO_THRESHOLD}_{SYMMETRY_THRESHOLD}_{WINDOW_SMA}.csv'
     df_resultados.to_csv(
         nome_arquivo_saida,
         index=False,
