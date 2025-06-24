@@ -10,13 +10,13 @@ import os
 # --- PASSO 1: CONFIGURAÇÃO CENTRALIZADA ---
 LISTA_TICKERS = [
     # Camada 1 (Alta Cap)
-    'BTC-USD', 'ETH-USD', 
+    'BTC-USD', 'ETH-USD',
     # Camada 2 (Plataformas Contrato Inteligente)
     'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD', 'AVAX-USD', 'DOT-USD', 'MATIC-USD',
     # Camada 3 (Outros Setores - DeFi, Oráculos, etc.)
     'LINK-USD', 'UNI-USD', 'LTC-USD', 'BCH-USD', 'TRX-USD', 'SHIB-USD'
 ]
-LISTA_INTERVALOS = ['1h' ,'4h', '1d', '1wk', '1mo']
+LISTA_INTERVALOS = ['1h', '4h', '1d', '1wk', '1mo']
 PERIODO_BUSCA_PADRAO = '8y'
 
 # --- PARÂMETROS GLOBAIS DO ALGORITMO ---
@@ -149,7 +149,7 @@ def identificar_padroes_hns(extremos: List[Dict[str, Any]]) -> List[Dict[str, An
 def salvar_resultados(df_resultados: pd.DataFrame, ticker: str, intervalo: str):
     """Salva os resultados em um CSV com nome dinâmico."""
     if not df_resultados.empty:
-        nome_arquivo = f"data/datasets/padroes_hns_{ticker}_{intervalo}.csv"
+        nome_arquivo = f"data/datasets/padroes_hns/padroes_hns_{ticker}_{intervalo}.csv"
         df_resultados.sort_values(
             by='data_inicio', ascending=False, inplace=True)
         df_resultados.to_csv(nome_arquivo, index=False,
@@ -165,7 +165,7 @@ def agregar_e_gerar_features(pasta_output: str = '.') -> None:
     """Encontra, carrega, enriquece, gera features e concatena todos os CSVs."""
     print("\n--- Iniciando Estágio 2: Agregação e Engenharia de Features ---")
     padrao_arquivo = os.path.join(
-        pasta_output, "data/datasets/padroes_hns_*.csv")
+        pasta_output, "data/datasets/padroes_hns/padroes_hns_*.csv")
     arquivos_csv = glob.glob(padrao_arquivo)
 
     if not arquivos_csv:
@@ -236,7 +236,7 @@ if __name__ == "__main__":
             print(
                 f"\n--- Processando: {ticker_atual} | Intervalo: {intervalo_atual} ---")
             periodo_para_buscar = PERIODO_BUSCA_PADRAO
-            if intervalo_atual == '4h' or '8h' or '12h':
+            if intervalo_atual == '4h':
                 periodo_para_buscar = '2y'
                 print(
                     f"ℹ️ AJUSTE: O período de busca foi modificado para '{periodo_para_buscar}' para o intervalo '{intervalo_atual}' devido às regras da API.")
