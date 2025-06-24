@@ -23,7 +23,7 @@ class LabelingToolHybrid(tk.Tk):
 
         self.title(
             "Ferramenta de Labeling Híbrida (Ajuste + Teclado) (v6.0 - Estável)")
-        self.geometry("1300x900")
+        #self.geometry("700x900")
 
         self.arquivo_saida = arquivo_saida
         self.df_trabalho = None
@@ -60,19 +60,38 @@ class LabelingToolHybrid(tk.Tk):
         self.carregar_proximo_padrao()
 
     def _setup_ui(self):
-        """Configura a interface gráfica do usuário."""
-        self.frame_grafico = tk.Frame(self)
-        self.frame_grafico.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self.frame_inferior = tk.Frame(self)
-        self.frame_inferior.pack(fill=tk.X, padx=10, pady=5)
+        """Configura a interface gráfica do usuário usando PanedWindow."""
+        # 1. Crie um PanedWindow vertical
+        m = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED)
+        m.pack(fill=tk.BOTH, expand=True)
+
+        # 2. Frame do Gráfico (sem alterações, mas adicionado ao PanedWindow)
+        self.frame_grafico = tk.Frame(m)
+        m.add(self.frame_grafico, minsize=400) # minsize evita que suma ao arrastar
+
+        # 3. Frame Inferior (agora dentro de um frame container no PanedWindow)
+        #    Isso ajuda a organizar os widgets dentro da parte de baixo do painel
+        container_inferior = tk.Frame(m, height=150) # Dê uma altura inicial
+        container_inferior.pack_propagate(False) # Impede que os widgets filhos encolham o frame
+        m.add(container_inferior, minsize=120)
+
+        self.frame_inferior = tk.Frame(container_inferior)
+        self.frame_inferior.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # ---- O resto do seu código de layout permanece o mesmo ----
+        # A única mudança é que os pais dos widgets são os novos frames
         self.info_label = tk.Label(
             self.frame_inferior, text="Carregando...", font=("Arial", 12), justify=tk.LEFT)
         self.info_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
         self.action_label = tk.Label(
             self.frame_inferior, text="Use o Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Arial", 12, "bold"))
         self.action_label.pack(side=tk.RIGHT, padx=10)
+        
         self.frame_ajustes = tk.Frame(self.frame_inferior)
         self.frame_ajustes.pack(side=tk.RIGHT, padx=20)
+        
+        # ... (código dos botões de ajuste com .grid) ...
         tk.Label(self.frame_ajustes, text="Início:",
                  font=("Arial", 10)).grid(row=0, column=0)
         tk.Button(self.frame_ajustes, text="<", command=lambda: self.ajustar_data(
