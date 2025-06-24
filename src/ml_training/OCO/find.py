@@ -8,9 +8,15 @@ import glob
 import os
 
 # --- PASSO 1: CONFIGURAÇÃO CENTRALIZADA ---
-LISTA_TICKERS = ['BTC-USD', 'ETH-USD',
-                 'SOL-USD', 'XRP-USD', 'ADA-USD', 'AVAX-USD']
-LISTA_INTERVALOS = ['4h', '1d']
+LISTA_TICKERS = [
+    # Camada 1 (Alta Cap)
+    'BTC-USD', 'ETH-USD', 
+    # Camada 2 (Plataformas Contrato Inteligente)
+    'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD', 'AVAX-USD', 'DOT-USD', 'MATIC-USD',
+    # Camada 3 (Outros Setores - DeFi, Oráculos, etc.)
+    'LINK-USD', 'UNI-USD', 'LTC-USD', 'BCH-USD', 'TRX-USD', 'SHIB-USD'
+]
+LISTA_INTERVALOS = ['1h' ,'4h', '1d', '1wk', '1mo']
 PERIODO_BUSCA_PADRAO = '8y'
 
 # --- PARÂMETROS GLOBAIS DO ALGORITMO ---
@@ -230,7 +236,7 @@ if __name__ == "__main__":
             print(
                 f"\n--- Processando: {ticker_atual} | Intervalo: {intervalo_atual} ---")
             periodo_para_buscar = PERIODO_BUSCA_PADRAO
-            if intervalo_atual == '4h':
+            if intervalo_atual == '4h' or '8h' or '12h':
                 periodo_para_buscar = '2y'
                 print(
                     f"ℹ️ AJUSTE: O período de busca foi modificado para '{periodo_para_buscar}' para o intervalo '{intervalo_atual}' devido às regras da API.")
