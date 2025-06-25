@@ -1,4 +1,4 @@
-# labeling_tool_final.py
+# labeling_tool_final_v6.1.py
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -12,23 +12,12 @@ import os
 
 
 class LabelingToolHybrid(tk.Tk):
-    """
-    Ferramenta de labeling híbrida que combina ajuste fino com botões e
-    rotulagem de alta velocidade com o teclado. Inclui gerenciamento de
-    estado, de memória e lida com diversos erros de dados e plotagem.
-    """
-
     def __init__(self, arquivo_entrada, arquivo_saida):
         super().__init__()
-
-        self.title(
-            "Ferramenta de Labeling Híbrida (Ajuste + Teclado) (v6.0 - Estável)")
-        #self.geometry("700x900")
-
+        self.title("Ferramenta de Labeling Otimizada (v6.1)")
+        # ... (código do __init__ continua o mesmo, mas adicionamos as novas variáveis de estado) ...
         self.arquivo_saida = arquivo_saida
         self.df_trabalho = None
-
-        # Variáveis de estado
         self.indice_atual = 0
         self.padrao_atual_info = None
         self.canvas_widget = None
@@ -37,11 +26,15 @@ class LabelingToolHybrid(tk.Tk):
         self.data_fim_ajustada = None
         self.data_cabeca_ajustada = None
 
-        # 1. Tenta configurar o DataFrame. Se falhar, encerra a aplicação.
+        # NOVO: Variáveis para guardar o estado do gráfico atual
+        self.df_grafico_atual = None
+        self.ax = None
+        self.span_amarelo = None
+        self.linha_cabeca = None
+
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
             return
 
-        # 2. Encontra o próximo padrão a ser anotado
         indices_para_anotar = self.df_trabalho[self.df_trabalho['label_humano'].isnull(
         )].index
         if indices_para_anotar.empty:
@@ -51,47 +44,30 @@ class LabelingToolHybrid(tk.Tk):
             return
         self.indice_atual = indices_para_anotar[0]
 
-        # 3. Configura a UI e os eventos
         self._setup_ui()
         self.bind('<Key>', self.on_key_press)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # 4. Carrega o primeiro padrão
         self.carregar_proximo_padrao()
 
     def _setup_ui(self):
-        """Configura a interface gráfica do usuário usando PanedWindow."""
-        # 1. Crie um PanedWindow vertical
+        # ... (seu código de setup da UI não precisa de alterações) ...
         m = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED)
         m.pack(fill=tk.BOTH, expand=True)
-
-        # 2. Frame do Gráfico (sem alterações, mas adicionado ao PanedWindow)
         self.frame_grafico = tk.Frame(m)
-        m.add(self.frame_grafico, minsize=400) # minsize evita que suma ao arrastar
-
-        # 3. Frame Inferior (agora dentro de um frame container no PanedWindow)
-        #    Isso ajuda a organizar os widgets dentro da parte de baixo do painel
-        container_inferior = tk.Frame(m, height=150) # Dê uma altura inicial
-        container_inferior.pack_propagate(False) # Impede que os widgets filhos encolham o frame
+        m.add(self.frame_grafico, minsize=400)
+        container_inferior = tk.Frame(m, height=150)
+        container_inferior.pack_propagate(False)
         m.add(container_inferior, minsize=120)
-
         self.frame_inferior = tk.Frame(container_inferior)
         self.frame_inferior.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        # ---- O resto do seu código de layout permanece o mesmo ----
-        # A única mudança é que os pais dos widgets são os novos frames
         self.info_label = tk.Label(
             self.frame_inferior, text="Carregando...", font=("Arial", 12), justify=tk.LEFT)
         self.info_label.pack(side=tk.LEFT, padx=10, pady=5)
-        
         self.action_label = tk.Label(
             self.frame_inferior, text="Use o Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Arial", 12, "bold"))
         self.action_label.pack(side=tk.RIGHT, padx=10)
-        
         self.frame_ajustes = tk.Frame(self.frame_inferior)
         self.frame_ajustes.pack(side=tk.RIGHT, padx=20)
-        
-        # ... (código dos botões de ajuste com .grid) ...
         tk.Label(self.frame_ajustes, text="Início:",
                  font=("Arial", 10)).grid(row=0, column=0)
         tk.Button(self.frame_ajustes, text="<", command=lambda: self.ajustar_data(
@@ -112,22 +88,16 @@ class LabelingToolHybrid(tk.Tk):
             'cabeca', 'frente')).grid(row=1, column=5)
 
     def setup_dataframe(self, arquivo_entrada, arquivo_saida):
-        """Carrega o dataset e retorna True em sucesso, False em falha."""
+        # ... (seu código de setup_dataframe não precisa de alterações) ...
         try:
             if os.path.exists(arquivo_saida):
-                print(
-                    f"Arquivo de progresso '{arquivo_saida}' encontrado. Carregando...")
                 self.df_trabalho = pd.read_csv(arquivo_saida)
             else:
-                print(
-                    f"Nenhum progresso salvo. Carregando de '{arquivo_entrada}'.")
                 self.df_trabalho = pd.read_csv(arquivo_entrada)
-
             if 'label_humano' not in self.df_trabalho.columns:
                 self.df_trabalho['label_humano'] = np.nan
             return True
         except FileNotFoundError:
-            # Esconde a janela principal antes de mostrar o erro para evitar bugs
             self.withdraw()
             messagebox.showerror(
                 "Erro de Arquivo", f"Arquivo de entrada não encontrado!\nVerifique o caminho: '{arquivo_entrada}'")
@@ -139,88 +109,65 @@ class LabelingToolHybrid(tk.Tk):
             self.destroy()
             return False
 
-    def on_key_press(self, event):
-        """Processa os eventos de teclado para labeling."""
-        key = event.keysym.lower()
-        if key in ['a', 'r']:
-            label = 1 if key == 'a' else 0
-            print(
-                f" -> RÓTULO DEFINIDO: {'APROVADO' if label == 1 else 'REJEITADO'}")
-            self.df_trabalho.loc[self.indice_atual,
-                                 'data_inicio'] = self.data_inicio_ajustada
-            self.df_trabalho.loc[self.indice_atual,
-                                 'data_fim'] = self.data_fim_ajustada
-            if pd.notna(self.data_cabeca_ajustada):
-                self.df_trabalho.loc[self.indice_atual,
-                                     'data_cabeca'] = self.data_cabeca_ajustada
-            self.df_trabalho.loc[self.indice_atual, 'label_humano'] = label
-            self.avancar_e_salvar()
-        elif key == 'q':
-            self.on_closing()
-
-    def on_closing(self):
-        """Garante que a memória seja liberada ao fechar a janela."""
-        print("Saindo e liberando recursos...")
-        if self.fig:
-            plt.close(self.fig)
-        self.destroy()
-
+    # MUDANÇA: A função de ajuste agora é muito mais leve
     def ajustar_data(self, qual_data, direcao):
-        """Move as datas de início, fim ou cabeça para ajuste fino."""
+        """Move as datas e chama a função leve de atualização, sem recarregar o gráfico."""
         intervalo = self.padrao_atual_info['intervalo']
         match = re.match(r"(\d+)([hHdD])", intervalo)
-        ajuste = pd.Timedelta(hours=4)  # Fallback
+        ajuste = pd.Timedelta(hours=4)
         if match:
             valor, unidade = int(match.groups()[0]), match.groups()[1].lower()
             ajuste = pd.Timedelta(
                 hours=valor) if unidade == 'h' else pd.Timedelta(days=valor)
         fator = -1 if direcao == 'tras' else 1
+
         if qual_data == 'inicio':
             self.data_inicio_ajustada += (ajuste * fator)
         elif qual_data == 'fim':
             self.data_fim_ajustada += (ajuste * fator)
         elif qual_data == 'cabeca' and pd.notna(self.data_cabeca_ajustada):
             self.data_cabeca_ajustada += (ajuste * fator)
-        self.plotar_grafico()
+
+        # Em vez de plotar tudo de novo, apenas atualizamos as marcações
+        self.atualizar_marcacoes()
         self.atualizar_info_label()
 
-    def avancar_e_salvar(self):
-        """Salva o progresso e avança para o próximo padrão não rotulado."""
+    # NOVO: Função leve para apenas redesenhar as marcações
+    def atualizar_marcacoes(self):
+        """Remove as marcações antigas e desenha novas no gráfico existente."""
+        if not self.ax or self.df_grafico_atual is None:
+            return
+
+        # Limpa as marcações da iteração anterior
+        if self.span_amarelo:
+            self.span_amarelo.remove()
+            self.span_amarelo = None
+        if self.linha_cabeca:
+            self.linha_cabeca.remove()
+            self.linha_cabeca = None
+
         try:
-            self.df_trabalho.to_csv(
-                self.arquivo_saida, index=False, date_format='%Y-%m-%d %H:%M:%S')
-            print(f"Progresso salvo em '{self.arquivo_saida}'")
+            # Calcula as novas posições com base nas datas ajustadas
+            start_pos_idx = (self.df_grafico_atual.index -
+                             self.data_inicio_ajustada).to_series().abs().argmin()
+            end_pos_idx = (self.df_grafico_atual.index -
+                           self.data_fim_ajustada).to_series().abs().argmin()
+
+            # Desenha a nova área amarela e a armazena
+            self.span_amarelo = self.ax.axvspan(
+                start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
+
+            if pd.notna(self.data_cabeca_ajustada):
+                head_pos_idx = (self.df_grafico_atual.index -
+                                self.data_cabeca_ajustada).to_series().abs().argmin()
+                # Desenha a nova linha da cabeça e a armazena
+                self.linha_cabeca = self.ax.axvline(
+                    x=head_pos_idx, color='dodgerblue', linestyle='--', linewidth=1.2)
+
+            # Força o canvas a se redesenhar com as novas marcações
+            self.canvas_widget.draw()
         except Exception as e:
-            messagebox.showerror(
-                "Erro ao Salvar", f"Não foi possível salvar o progresso: {e}")
-            self.on_closing()
-            return
-
-        proximos_indices = self.df_trabalho[self.df_trabalho['label_humano'].isnull(
-        )].index
-        if not proximos_indices.empty:
-            self.indice_atual = proximos_indices[0]
-            self.carregar_proximo_padrao()
-        else:
-            messagebox.showinfo(
-                "Fim!", "Parabéns! Todos os padrões foram rotulados.")
-            self.on_closing()
-
-    def carregar_proximo_padrao(self):
-        """Prepara os dados do próximo padrão a ser exibido."""
-        if self.indice_atual not in self.df_trabalho.index:
-            messagebox.showinfo("Fim!", "Todos os padrões foram analisados.")
-            self.on_closing()
-            return
-        self.padrao_atual_info = self.df_trabalho.loc[self.indice_atual]
-        self.data_inicio_ajustada = pd.to_datetime(
-            self.padrao_atual_info['data_inicio'])
-        self.data_fim_ajustada = pd.to_datetime(
-            self.padrao_atual_info['data_fim'])
-        self.data_cabeca_ajustada = pd.to_datetime(
-            self.padrao_atual_info['data_cabeca'], errors='coerce')
-        self.plotar_grafico()
-        self.atualizar_info_label()
+            print(f"AVISO: Não foi possível atualizar marcações. Erro: {e}")
 
     def plotar_grafico(self):
         """Função central que busca dados, limpa e plota o gráfico."""
@@ -255,15 +202,25 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # Sanitização do índice e dos dados
-        df_grafico.index = pd.to_datetime(df_grafico.index).tz_localize(None)
+        # --- CORREÇÃO NA ORDEM DAS OPERAÇÕES ---
+        # 1. Primeiro, checamos se as colunas são MultiIndex e achatamos se for o caso.
         if isinstance(df_grafico.columns, pd.MultiIndex):
             df_grafico.columns = df_grafico.columns.get_level_values(0)
 
-        for col in ['Open', 'High', 'Low', 'Close']:
-            df_grafico[col] = pd.to_numeric(df_grafico[col], errors='coerce')
-        df_grafico.dropna(
-            subset=['Open', 'High', 'Low', 'Close'], inplace=True)
+        # 2. AGORA que garantimos que os nomes são strings, normalizamos para minúsculas.
+        df_grafico.columns = [col.lower() for col in df_grafico.columns]
+        # --- FIM DA CORREÇÃO ---
+
+        # 3. O resto da sanitização continua como antes, usando nomes minúsculos.
+        df_grafico.index = pd.to_datetime(df_grafico.index).tz_localize(None)
+
+        cols_to_validate = ['open', 'high', 'low', 'close']
+        for col in cols_to_validate:
+            if col in df_grafico.columns:
+                df_grafico[col] = pd.to_numeric(
+                    df_grafico[col], errors='coerce')
+
+        df_grafico.dropna(subset=cols_to_validate, inplace=True)
 
         if df_grafico.empty:
             print(f"AVISO: DataFrame vazio após limpeza. Marcando como erro (-1).")
@@ -273,6 +230,7 @@ class LabelingToolHybrid(tk.Tk):
 
         # Plotagem
         try:
+            # Passamos o DataFrame com colunas minúsculas para o mplfinance
             self.fig, axlist = mpf.plot(
                 df_grafico, type='candle', style='charles', returnfig=True, figsize=(12, 8))
             ax = axlist[0]
@@ -297,8 +255,61 @@ class LabelingToolHybrid(tk.Tk):
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+    # O resto dos seus métodos (on_key_press, on_closing, avancar_e_salvar,
+    # carregar_proximo_padrao, atualizar_info_label) permanecem os mesmos.
+    # ... cole o resto dos seus métodos aqui ...
+    def on_key_press(self, event):
+        key = event.keysym.lower()
+        if key in ['a', 'r']:
+            label = 1 if key == 'a' else 0
+            self.df_trabalho.loc[self.indice_atual,
+                                 'data_inicio'] = self.data_inicio_ajustada
+            self.df_trabalho.loc[self.indice_atual,
+                                 'data_fim'] = self.data_fim_ajustada
+            if pd.notna(self.data_cabeca_ajustada):
+                self.df_trabalho.loc[self.indice_atual,
+                                     'data_cabeca'] = self.data_cabeca_ajustada
+            self.df_trabalho.loc[self.indice_atual, 'label_humano'] = label
+            self.avancar_e_salvar()
+        elif key == 'q':
+            self.on_closing()
+
+    def on_closing(self):
+        print("Saindo e liberando recursos...")
+        if self.fig:
+            plt.close(self.fig)
+        self.destroy()
+
+    def avancar_e_salvar(self):
+        self.df_trabalho.to_csv(
+            self.arquivo_saida, index=False, date_format='%Y-%m-%d %H:%M:%S')
+        print(f"Progresso salvo em '{self.arquivo_saida}'")
+        proximos_indices = self.df_trabalho[self.df_trabalho['label_humano'].isnull(
+        )].index
+        if not proximos_indices.empty:
+            self.indice_atual = proximos_indices[0]
+            self.carregar_proximo_padrao()
+        else:
+            messagebox.showinfo(
+                "Fim!", "Parabéns! Todos os padrões foram rotulados.")
+            self.on_closing()
+
+    def carregar_proximo_padrao(self):
+        if self.indice_atual not in self.df_trabalho.index:
+            messagebox.showinfo("Fim!", "Todos os padrões foram analisados.")
+            self.on_closing()
+            return
+        self.padrao_atual_info = self.df_trabalho.loc[self.indice_atual]
+        self.data_inicio_ajustada = pd.to_datetime(
+            self.padrao_atual_info['data_inicio'])
+        self.data_fim_ajustada = pd.to_datetime(
+            self.padrao_atual_info['data_fim'])
+        self.data_cabeca_ajustada = pd.to_datetime(
+            self.padrao_atual_info['data_cabeca'], errors='coerce')
+        self.plotar_grafico()  # Esta chamada agora é a "pesada"
+        self.atualizar_info_label()
+
     def atualizar_info_label(self):
-        """Atualiza o texto da UI com as informações do padrão atual."""
         total, feitos = len(self.df_trabalho), len(
             self.df_trabalho.dropna(subset=['label_humano']))
         padrao = self.padrao_atual_info
@@ -312,11 +323,8 @@ class LabelingToolHybrid(tk.Tk):
 
 
 if __name__ == '__main__':
-    # Certifique-se de que o caminho para o arquivo de entrada está correto
     ARQUIVO_ENTRADA = 'data/datasets/filtered/dataset_featured.csv'
     ARQUIVO_SAIDA = 'data/datasets/filtered/dataset_labeled.csv'
-
     app = LabelingToolHybrid(ARQUIVO_ENTRADA, ARQUIVO_SAIDA)
-    # A verificação de falha no __init__ impede que o mainloop seja chamado para uma janela já destruída
     if app.winfo_exists():
         app.mainloop()

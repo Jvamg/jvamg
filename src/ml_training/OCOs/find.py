@@ -36,7 +36,7 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
         f"Buscando dados históricos de {ticker} para o período {period} e intervalo {interval}...")
     df = yf.download(tickers=ticker, period=period,
                      interval=interval, auto_adjust=True, progress=False)
-    if df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         raise ConnectionError(
             f"Não foi possível buscar os dados para {ticker} no intervalo {interval}.")
     print("Dados carregados com sucesso.")
@@ -50,6 +50,7 @@ def encontrar_extremos(df: pd.DataFrame, window_sma: int, sensitivity: float) ->
     precos = df['SMA_Close'].values
     if len(precos) == 0:
         return []
+    precos = np.asarray(precos)  # Garante que é um np.ndarray
     prominence_calculada = float(df['Close'].mean()) * sensitivity
     indices_picos, _ = find_peaks(precos, prominence=prominence_calculada)
     indices_vales, _ = find_peaks(-precos, prominence=prominence_calculada)
@@ -208,7 +209,7 @@ def agregar_e_gerar_features(pasta_output: str = '.') -> None:
         '1h': 60, '4h': 240, '1d': 1440, '5d': 7200, '1wk': 10080
     }
     df_master['intervalo_em_minutos'] = df_master['intervalo'].map(
-        mapa_intervalo_minutos)
+        lambda x: mapa_intervalo_minutos.get(x, np.nan))
     print("  -> Feature 'intervalo_em_minutos' criada.")
 
     # Reordenando colunas para melhor legibilidade do CSV
