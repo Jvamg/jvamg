@@ -1,4 +1,4 @@
-# labeling_tool_final_v6.1.py
+# anotador_gui.py (versão final consolidada)
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -12,12 +12,22 @@ import os
 
 
 class LabelingToolHybrid(tk.Tk):
+    """
+    Ferramenta de labeling híbrida que combina ajuste fino com botões e
+    rotulagem de alta velocidade com o teclado. Inclui gerenciamento de
+    estado, de memória e lida com diversos erros de dados e plotagem.
+    """
+
     def __init__(self, arquivo_entrada, arquivo_saida):
         super().__init__()
-        self.title("Ferramenta de Labeling Otimizada (v6.1)")
-        # ... (código do __init__ continua o mesmo, mas adicionamos as novas variáveis de estado) ...
+
+        self.title("Ferramenta de Labeling Otimizada (v6.3 - Final)")
+        self.geometry("1300x900")
+
         self.arquivo_saida = arquivo_saida
         self.df_trabalho = None
+
+        # Variáveis de estado
         self.indice_atual = 0
         self.padrao_atual_info = None
         self.canvas_widget = None
@@ -25,8 +35,6 @@ class LabelingToolHybrid(tk.Tk):
         self.data_inicio_ajustada = None
         self.data_fim_ajustada = None
         self.data_cabeca_ajustada = None
-
-        # NOVO: Variáveis para guardar o estado do gráfico atual
         self.df_grafico_atual = None
         self.ax = None
         self.span_amarelo = None
@@ -50,7 +58,7 @@ class LabelingToolHybrid(tk.Tk):
         self.carregar_proximo_padrao()
 
     def _setup_ui(self):
-        # ... (seu código de setup da UI não precisa de alterações) ...
+        # O setup da UI permanece o mesmo
         m = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED)
         m.pack(fill=tk.BOTH, expand=True)
         self.frame_grafico = tk.Frame(m)
@@ -88,7 +96,6 @@ class LabelingToolHybrid(tk.Tk):
             'cabeca', 'frente')).grid(row=1, column=5)
 
     def setup_dataframe(self, arquivo_entrada, arquivo_saida):
-        # ... (seu código de setup_dataframe não precisa de alterações) ...
         try:
             if os.path.exists(arquivo_saida):
                 self.df_trabalho = pd.read_csv(arquivo_saida)
@@ -109,9 +116,7 @@ class LabelingToolHybrid(tk.Tk):
             self.destroy()
             return False
 
-    # MUDANÇA: A função de ajuste agora é muito mais leve
     def ajustar_data(self, qual_data, direcao):
-        """Move as datas e chama a função leve de atualização, sem recarregar o gráfico."""
         intervalo = self.padrao_atual_info['intervalo']
         match = re.match(r"(\d+)([hHdD])", intervalo)
         ajuste = pd.Timedelta(hours=4)
@@ -120,58 +125,40 @@ class LabelingToolHybrid(tk.Tk):
             ajuste = pd.Timedelta(
                 hours=valor) if unidade == 'h' else pd.Timedelta(days=valor)
         fator = -1 if direcao == 'tras' else 1
-
         if qual_data == 'inicio':
             self.data_inicio_ajustada += (ajuste * fator)
         elif qual_data == 'fim':
             self.data_fim_ajustada += (ajuste * fator)
         elif qual_data == 'cabeca' and pd.notna(self.data_cabeca_ajustada):
             self.data_cabeca_ajustada += (ajuste * fator)
-
-        # Em vez de plotar tudo de novo, apenas atualizamos as marcações
         self.atualizar_marcacoes()
         self.atualizar_info_label()
 
-    # NOVO: Função leve para apenas redesenhar as marcações
     def atualizar_marcacoes(self):
-        """Remove as marcações antigas e desenha novas no gráfico existente."""
-        if not self.ax or self.df_grafico_atual is None:
+        if self.ax is None or self.df_grafico_atual is None:
             return
-
-        # Limpa as marcações da iteração anterior
         if self.span_amarelo:
             self.span_amarelo.remove()
-            self.span_amarelo = None
         if self.linha_cabeca:
             self.linha_cabeca.remove()
-            self.linha_cabeca = None
-
         try:
-            # Calcula as novas posições com base nas datas ajustadas
             start_pos_idx = (self.df_grafico_atual.index -
                              self.data_inicio_ajustada).to_series().abs().argmin()
             end_pos_idx = (self.df_grafico_atual.index -
                            self.data_fim_ajustada).to_series().abs().argmin()
-
-            # Desenha a nova área amarela e a armazena
             self.span_amarelo = self.ax.axvspan(
                 start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
-
             if pd.notna(self.data_cabeca_ajustada):
                 head_pos_idx = (self.df_grafico_atual.index -
                                 self.data_cabeca_ajustada).to_series().abs().argmin()
-                # Desenha a nova linha da cabeça e a armazena
                 self.linha_cabeca = self.ax.axvline(
                     x=head_pos_idx, color='dodgerblue', linestyle='--', linewidth=1.2)
-
-            # Força o canvas a se redesenhar com as novas marcações
             self.canvas_widget.draw()
         except Exception as e:
-            print(f"AVISO: Não foi possível atualizar marcações. Erro: {e}")
+            print(
+                f"AVISO: Não foi possível atualizar as marcações no gráfico. Erro: {e}")
 
     def plotar_grafico(self):
-        """Função central que busca dados, limpa e plota o gráfico."""
-        # Limpeza de recursos da iteração anterior para evitar memory leaks
         if self.canvas_widget:
             self.canvas_widget.get_tk_widget().destroy()
         if self.fig:
@@ -180,15 +167,9 @@ class LabelingToolHybrid(tk.Tk):
         padrao = self.padrao_atual_info
         data_inicio, data_fim, intervalo = self.data_inicio_ajustada, self.data_fim_ajustada, padrao[
             'intervalo']
-
-        # Lógica de buffer para contexto visual
         duracao = data_fim - data_inicio
-        if intervalo in ['1h', '4h']:
-            buffer = max(pd.Timedelta(days=5), duracao * 1.5)
-        elif intervalo == '1d':
-            buffer = max(pd.Timedelta(weeks=4), duracao * 1.0)
-        else:
-            buffer = duracao * 0.5
+        buffer = max(pd.Timedelta(days=5), duracao * 1.5) if intervalo in [
+            '1h', '4h'] else max(pd.Timedelta(weeks=4), duracao * 1.0)
         data_inicio_contexto, data_fim_contexto = data_inicio - buffer, data_fim + buffer
 
         print(
@@ -202,16 +183,13 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # --- CORREÇÃO NA ORDEM DAS OPERAÇÕES ---
-        # 1. Primeiro, checamos se as colunas são MultiIndex e achatamos se for o caso.
+        # --- ORDEM DE LIMPEZA CORRIGIDA ---
+        # 1. Primeiro, trata o MultiIndex, se existir.
         if isinstance(df_grafico.columns, pd.MultiIndex):
             df_grafico.columns = df_grafico.columns.get_level_values(0)
-
-        # 2. AGORA que garantimos que os nomes são strings, normalizamos para minúsculas.
+        # 2. AGORA, com nomes de colunas como strings, normaliza para minúsculas.
         df_grafico.columns = [col.lower() for col in df_grafico.columns]
-        # --- FIM DA CORREÇÃO ---
-
-        # 3. O resto da sanitização continua como antes, usando nomes minúsculos.
+        # 3. E finalmente, sanitiza o índice de data.
         df_grafico.index = pd.to_datetime(df_grafico.index).tz_localize(None)
 
         cols_to_validate = ['open', 'high', 'low', 'close']
@@ -219,7 +197,6 @@ class LabelingToolHybrid(tk.Tk):
             if col in df_grafico.columns:
                 df_grafico[col] = pd.to_numeric(
                     df_grafico[col], errors='coerce')
-
         df_grafico.dropna(subset=cols_to_validate, inplace=True)
 
         if df_grafico.empty:
@@ -228,36 +205,23 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # Plotagem
+        self.df_grafico_atual = df_grafico.copy()
+
         try:
-            # Passamos o DataFrame com colunas minúsculas para o mplfinance
             self.fig, axlist = mpf.plot(
-                df_grafico, type='candle', style='charles', returnfig=True, figsize=(12, 8))
-            ax = axlist[0]
-            start_pos_idx = (df_grafico.index -
-                             data_inicio).to_series().abs().argmin()
-            end_pos_idx = (df_grafico.index -
-                           data_fim).to_series().abs().argmin()
-            ax.axvspan(start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
-            if pd.notna(self.data_cabeca_ajustada):
-                head_pos_idx = (
-                    df_grafico.index - self.data_cabeca_ajustada).to_series().abs().argmin()
-                ax.axvline(x=head_pos_idx, color='dodgerblue',
-                           linestyle='--', linewidth=1.2)
+                self.df_grafico_atual, type='candle', style='charles', returnfig=True, figsize=(12, 8))
+            self.ax = axlist[0]
+            self.atualizar_marcacoes()  # Delega o desenho inicial das marcações
+            canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
+            self.canvas_widget = canvas
+            canvas.draw()
+            canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         except Exception as e:
             print(f"ERRO CRÍTICO ao plotar o gráfico: {e}")
             self.df_trabalho.loc[self.indice_atual, 'label_humano'] = -1
             self.avancar_e_salvar()
-            return
 
-        canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
-        self.canvas_widget = canvas
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-    # O resto dos seus métodos (on_key_press, on_closing, avancar_e_salvar,
-    # carregar_proximo_padrao, atualizar_info_label) permanecem os mesmos.
-    # ... cole o resto dos seus métodos aqui ...
+    # --- O RESTANTE DA CLASSE (JÁ ESTÁVEL) ---
     def on_key_press(self, event):
         key = event.keysym.lower()
         if key in ['a', 'r']:
@@ -306,7 +270,7 @@ class LabelingToolHybrid(tk.Tk):
             self.padrao_atual_info['data_fim'])
         self.data_cabeca_ajustada = pd.to_datetime(
             self.padrao_atual_info['data_cabeca'], errors='coerce')
-        self.plotar_grafico()  # Esta chamada agora é a "pesada"
+        self.plotar_grafico()
         self.atualizar_info_label()
 
     def atualizar_info_label(self):
