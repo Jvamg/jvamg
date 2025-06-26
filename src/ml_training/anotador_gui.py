@@ -1,4 +1,4 @@
-# anotador_gui.py (versão final consolidada)
+# anotador_gui.py (v6.4 - Final com correção de renderização)
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -12,22 +12,16 @@ import os
 
 
 class LabelingToolHybrid(tk.Tk):
-    """
-    Ferramenta de labeling híbrida que combina ajuste fino com botões e
-    rotulagem de alta velocidade com o teclado. Inclui gerenciamento de
-    estado, de memória e lida com diversos erros de dados e plotagem.
-    """
-
     def __init__(self, arquivo_entrada, arquivo_saida):
         super().__init__()
 
-        self.title("Ferramenta de Labeling Otimizada (v6.3 - Final)")
+        self.title("Ferramenta de Labeling Otimizada (v6.4 - Final)")
         self.geometry("1300x900")
 
         self.arquivo_saida = arquivo_saida
         self.df_trabalho = None
 
-        # Variáveis de estado
+        # --- Variáveis de estado ---
         self.indice_atual = 0
         self.padrao_atual_info = None
         self.canvas_widget = None
@@ -58,7 +52,6 @@ class LabelingToolHybrid(tk.Tk):
         self.carregar_proximo_padrao()
 
     def _setup_ui(self):
-        # O setup da UI permanece o mesmo
         m = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED)
         m.pack(fill=tk.BOTH, expand=True)
         self.frame_grafico = tk.Frame(m)
@@ -116,104 +109,20 @@ class LabelingToolHybrid(tk.Tk):
             self.destroy()
             return False
 
-    # Dentro da sua classe LabelingToolHybrid
-    def ajustar_data(self, qual_data, direcao):
-        """Move as datas e chama a função leve de atualização, com lógica de intervalo aprimorada."""
-        intervalo = self.padrao_atual_info['intervalo']
-
-        # MUDANÇA: Regex mais flexível para capturar 'h', 'd', 'wk', etc.
-        match = re.match(r"(\d+)(\w+)", intervalo)
-
-        ajuste = pd.Timedelta(hours=4)  # Mantém um fallback seguro
-        if match:
-            valor, unidade = int(match.groups()[0]), match.groups()[1].lower()
-            # MUDANÇA: Lógica de if/elif para tratar as unidades corretamente
-            if 'h' in unidade:
-                ajuste = pd.Timedelta(hours=valor)
-            elif 'd' in unidade:
-                ajuste = pd.Timedelta(days=valor)
-            elif 'wk' in unidade or 'w' in unidade:
-                ajuste = pd.Timedelta(weeks=valor)
-
-        fator = -1 if direcao == 'tras' else 1
-
-        if qual_data == 'inicio':
-            self.data_inicio_ajustada += (ajuste * fator)
-        elif qual_data == 'fim':
-            self.data_fim_ajustada += (ajuste * fator)
-        elif qual_data == 'cabeca' and pd.notna(self.data_cabeca_ajustada):
-            self.data_cabeca_ajustada += (ajuste * fator)
-
-        self.atualizar_marcacoes()
-        self.atualizar_info_label()
-
-    # Dentro da sua classe LabelingToolHybrid
-    def atualizar_marcacoes(self):
-        """Remove as marcações antigas e desenha novas no gráfico existente."""
-
-        # MUDANÇA: "Guarda de proteção" para evitar o erro de NoneType
-        if self.ax is None or self.canvas_widget is None or self.df_grafico_atual is None:
-            print(
-                "AVISO: Tentativa de atualizar marcações sem um gráfico base. Operação ignorada.")
-            return
-
-        # Limpa as marcações ("artistas") da iteração anterior
-        if self.span_amarelo:
-            self.span_amarelo.remove()
-        if self.linha_cabeca:
-            self.linha_cabeca.remove()
-        self.span_amarelo, self.linha_cabeca = None, None  # Reseta as referências
-
-        try:
-            # Calcula as novas posições com base nas datas ajustadas
-            start_pos_idx = (self.df_grafico_atual.index -
-                             self.data_inicio_ajustada).to_series().abs().argmin()
-            end_pos_idx = (self.df_grafico_atual.index -
-                           self.data_fim_ajustada).to_series().abs().argmin()
-
-            self.span_amarelo = self.ax.axvspan(
-                start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
-
-            if pd.notna(self.data_cabeca_ajustada):
-                head_pos_idx = (self.df_grafico_atual.index -
-                                self.data_cabeca_ajustada).to_series().abs().argmin()
-                self.linha_cabeca = self.ax.axvline(
-                    x=head_pos_idx, color='dodgerblue', linestyle='--', linewidth=1.2)
-
-            self.canvas_widget.draw()
-        except Exception as e:
-            print(
-                f"AVISO: Não foi possível atualizar as marcações no gráfico. Erro: {e}")
-
     def plotar_grafico(self):
-        """Função central que busca dados, limpa e plota o gráfico."""
-        # 1. Limpeza de recursos da iteração anterior
         if self.canvas_widget:
             self.canvas_widget.get_tk_widget().destroy()
         if self.fig:
             plt.close(self.fig)
+        self.fig, self.ax, self.df_grafico_atual, self.canvas_widget, self.span_amarelo, self.linha_cabeca = [
+            None] * 6
 
-        # NOVO: Reset explícito do estado do gráfico
-        # Isso garante que não haja "lixo" de um padrão anterior se a plotagem falhar.
-        self.fig = None
-        self.ax = None
-        self.df_grafico_atual = None
-        self.canvas_widget = None
-        self.span_amarelo = None
-        self.linha_cabeca = None
-
-        # 2. O resto da função continua como antes
         padrao = self.padrao_atual_info
         data_inicio, data_fim, intervalo = self.data_inicio_ajustada, self.data_fim_ajustada, padrao[
             'intervalo']
-
         duracao = data_fim - data_inicio
-        if intervalo in ['1h', '4h']:
-            buffer = max(pd.Timedelta(days=5), duracao * 1.5)
-        elif intervalo == '1d':
-            buffer = max(pd.Timedelta(weeks=4), duracao * 1.0)
-        else:
-            buffer = duracao * 0.5
+        buffer = max(pd.Timedelta(days=5), duracao * 1.5) if intervalo in [
+            '1h', '4h'] else max(pd.Timedelta(weeks=4), duracao * 1.0)
         data_inicio_contexto, data_fim_contexto = data_inicio - buffer, data_fim + buffer
 
         print(
@@ -227,7 +136,6 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # Ordem correta de limpeza de colunas e índice
         if isinstance(df_grafico.columns, pd.MultiIndex):
             df_grafico.columns = df_grafico.columns.get_level_values(0)
         df_grafico.columns = [col.lower() for col in df_grafico.columns]
@@ -246,28 +154,85 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # Armazena o DataFrame do gráfico para uso na atualização das marcações
         self.df_grafico_atual = df_grafico.copy()
 
         try:
+            # --- MUDANÇA: CORREÇÃO NA ORDEM DE RENDERIZAÇÃO ---
+            # 1. Cria a figura e os eixos base
             self.fig, axlist = mpf.plot(
                 self.df_grafico_atual, type='candle', style='charles', returnfig=True, figsize=(12, 8))
             self.ax = axlist[0]
 
-            # Delega o desenho inicial das marcações
-            self.atualizar_marcacoes()
-
+            # 2. Cria o 'Canvas' do Tkinter para exibir a figura
             canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
             self.canvas_widget = canvas
+
+            # 3. Desenha o canvas na tela
             canvas.draw()
             canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+            # 4. SÓ AGORA, com a "tela" pronta, desenhamos as marcações por cima
+            self.atualizar_marcacoes()
 
         except Exception as e:
             print(f"ERRO CRÍTICO ao plotar o gráfico: {e}")
             self.df_trabalho.loc[self.indice_atual, 'label_humano'] = -1
             self.avancar_e_salvar()
 
-    # --- O RESTANTE DA CLASSE (JÁ ESTÁVEL) ---
+    def atualizar_marcacoes(self):
+        if self.ax is None:
+            print("AVISO: Eixos do gráfico não encontrados. Ignorando atualização.")
+            return
+
+        if self.span_amarelo:
+            self.span_amarelo.remove()
+        if self.linha_cabeca:
+            self.linha_cabeca.remove()
+        self.span_amarelo, self.linha_cabeca = None, None
+
+        try:
+            start_pos_idx = (self.df_grafico_atual.index -
+                             self.data_inicio_ajustada).to_series().abs().argmin()
+            end_pos_idx = (self.df_grafico_atual.index -
+                           self.data_fim_ajustada).to_series().abs().argmin()
+            self.span_amarelo = self.ax.axvspan(
+                start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
+
+            if pd.notna(self.data_cabeca_ajustada):
+                head_pos_idx = (self.df_grafico_atual.index -
+                                self.data_cabeca_ajustada).to_series().abs().argmin()
+                self.linha_cabeca = self.ax.axvline(
+                    x=head_pos_idx, color='dodgerblue', linestyle='--', linewidth=1.2)
+
+            # A chamada .draw() é crucial para o canvas exibir a mudança
+            if self.canvas_widget:
+                self.canvas_widget.draw()
+        except Exception as e:
+            print(
+                f"AVISO: Não foi possível atualizar as marcações no gráfico. Erro: {e}")
+
+    def ajustar_data(self, qual_data, direcao):
+        intervalo = self.padrao_atual_info['intervalo']
+        match = re.match(r"(\d+)(\w+)", intervalo)
+        ajuste = pd.Timedelta(hours=4)
+        if match:
+            valor, unidade = int(match.groups()[0]), match.groups()[1].lower()
+            if 'h' in unidade:
+                ajuste = pd.Timedelta(hours=valor)
+            elif 'd' in unidade:
+                ajuste = pd.Timedelta(days=valor)
+            elif 'wk' in unidade or 'w' in unidade:
+                ajuste = pd.Timedelta(weeks=valor)
+        fator = -1 if direcao == 'tras' else 1
+        if qual_data == 'inicio':
+            self.data_inicio_ajustada += (ajuste * fator)
+        elif qual_data == 'fim':
+            self.data_fim_ajustada += (ajuste * fator)
+        elif qual_data == 'cabeca' and pd.notna(self.data_cabeca_ajustada):
+            self.data_cabeca_ajustada += (ajuste * fator)
+        self.atualizar_marcacoes()
+        self.atualizar_info_label()
+
     def on_key_press(self, event):
         key = event.keysym.lower()
         if key in ['a', 'r']:
@@ -293,7 +258,6 @@ class LabelingToolHybrid(tk.Tk):
     def avancar_e_salvar(self):
         self.df_trabalho.to_csv(
             self.arquivo_saida, index=False, date_format='%Y-%m-%d %H:%M:%S')
-        print(f"Progresso salvo em '{self.arquivo_saida}'")
         proximos_indices = self.df_trabalho[self.df_trabalho['label_humano'].isnull(
         )].index
         if not proximos_indices.empty:
