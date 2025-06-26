@@ -223,6 +223,8 @@ class LabelingToolHybrid(tk.Tk):
                 ajuste = pd.Timedelta(days=valor)
             elif 'wk' in unidade or 'w' in unidade:
                 ajuste = pd.Timedelta(weeks=valor)
+            elif 'mo' in unidade:
+                ajuste = pd.Timedelta(weeks=valor * 4)
         fator = -1 if direcao == 'tras' else 1
         if qual_data == 'inicio':
             self.data_inicio_ajustada += (ajuste * fator)
