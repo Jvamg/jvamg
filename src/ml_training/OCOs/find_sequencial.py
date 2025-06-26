@@ -69,13 +69,13 @@ def get_price_on_neckline(point_idx: int, p1: Dict, p2: Dict, slope: float) -> f
 
 
 # NOVO: Função de validação unificada para padrões HNS (OCO e OCOI)
-def _validate_hns_pattern(ombro1: Dict, neckline_p1: Dict, cabeca: Dict, neckline_p2: Dict, ombro2: Dict, tipo_padrao: str) -> Optional[Dict[str, Any]]:
+def _validate_hns_pattern(p0: Dict,ombro1: Dict, neckline_p1: Dict, cabeca: Dict, neckline_p2: Dict, ombro2: Dict, p6: Dict, tipo_padrao: str) -> Optional[Dict[str, Any]]:
     """
-    Valida um conjunto de 5 pontos (ombro1, neckline_p1, cabeca, neckline_p2, ombro2)
+    Valida um conjunto de 7 pontos (p0, ombro1, neckline_p1, cabeca, neckline_p2, ombro2, p6)
     para formar um padrão OCO ou OCOI, aplicando as regras de validação.
     """
     # 1. Ordem dos pontos (já garantida pela busca sequencial, mas bom para robustez)
-    if not (ombro1['idx'] < neckline_p1['idx'] < cabeca['idx'] < neckline_p2['idx'] < ombro2['idx']):
+    if not (p0['idx'] < ombro1['idx'] < neckline_p1['idx'] < cabeca['idx'] < neckline_p2['idx'] < ombro2['idx'] < p6['idx']):
         return None
 
     # 2. Duração do padrão (distância entre os ombros)
@@ -134,12 +134,14 @@ def _validate_hns_pattern(ombro1: Dict, neckline_p1: Dict, cabeca: Dict, necklin
     # Se todas as validações passarem, retorna os detalhes do padrão
     return {
         'tipo_padrao': tipo_padrao,
-        'data_inicio': ombro1['data'],
-        'data_fim': ombro2['data'],
+        'data_inicio': p0['data'],
+        'data_fim': p6['data'],
+        'data_ombro1': ombro1['data'],
+        'data_ombro2': ombro2['data'],
         'preco_cabeca': cabeca['preco'],
         'data_cabeca': cabeca['data'],
-        'idx_inicio': ombro1['idx'],
-        'idx_fim': ombro2['idx']
+        'idx_inicio': p0['idx'],
+        'idx_fim': p6['idx']
     }
 
 
@@ -172,7 +174,7 @@ def identificar_padroes_hns_sequential(extremos: List[Dict[str, Any]]) -> List[D
             p6['tipo'] == 'VALE'):
 
             # Valida os 5 pontos centrais do padrão OCO
-            padrao = _validate_hns_pattern(p1, p2, p3, p4, p5, 'OCO')
+            padrao = _validate_hns_pattern(p0, p1, p2, p3, p4, p5, p6, 'OCO')
             if padrao:
                 # Adiciona o padrão encontrado se ele ainda não estiver na lista
                 if padrao not in lista_de_padroes:
@@ -189,7 +191,7 @@ def identificar_padroes_hns_sequential(extremos: List[Dict[str, Any]]) -> List[D
             p6['tipo'] == 'PICO'):
 
             # Valida os 5 pontos centrais do padrão OCOI
-            padrao = _validate_hns_pattern(p1, p2, p3, p4, p5, 'OCOI')
+            padrao = _validate_hns_pattern(p0, p1, p2, p3, p4, p5, p6, 'OCOI')
             if padrao:
                 # Adiciona o padrão encontrado se ele ainda não estiver na lista
                 if padrao not in lista_de_padroes:

@@ -311,7 +311,7 @@ class LabelingToolHybrid(tk.Tk):
 
 
 if __name__ == '__main__':
-    ARQUIVO_ENTRADA = 'data/datasets/filtered/dataset_featured.csv'
+    ARQUIVO_ENTRADA = 'data/datasets/filtered/dataset_featured_sequential.csv'
     ARQUIVO_SAIDA = 'data/datasets/filtered/dataset_labeled.csv'
     app = LabelingToolHybrid(ARQUIVO_ENTRADA, ARQUIVO_SAIDA)
     if app.winfo_exists():
