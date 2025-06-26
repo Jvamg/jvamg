@@ -116,43 +116,70 @@ class LabelingToolHybrid(tk.Tk):
             self.destroy()
             return False
 
+    # Dentro da sua classe LabelingToolHybrid
     def ajustar_data(self, qual_data, direcao):
+        """Move as datas e chama a função leve de atualização, com lógica de intervalo aprimorada."""
         intervalo = self.padrao_atual_info['intervalo']
-        match = re.match(r"(\d+)([hHdD])", intervalo)
-        ajuste = pd.Timedelta(hours=4)
+
+        # MUDANÇA: Regex mais flexível para capturar 'h', 'd', 'wk', etc.
+        match = re.match(r"(\d+)(\w+)", intervalo)
+
+        ajuste = pd.Timedelta(hours=4)  # Mantém um fallback seguro
         if match:
             valor, unidade = int(match.groups()[0]), match.groups()[1].lower()
-            ajuste = pd.Timedelta(
-                hours=valor) if unidade == 'h' else pd.Timedelta(days=valor)
+            # MUDANÇA: Lógica de if/elif para tratar as unidades corretamente
+            if 'h' in unidade:
+                ajuste = pd.Timedelta(hours=valor)
+            elif 'd' in unidade:
+                ajuste = pd.Timedelta(days=valor)
+            elif 'wk' in unidade or 'w' in unidade:
+                ajuste = pd.Timedelta(weeks=valor)
+
         fator = -1 if direcao == 'tras' else 1
+
         if qual_data == 'inicio':
             self.data_inicio_ajustada += (ajuste * fator)
         elif qual_data == 'fim':
             self.data_fim_ajustada += (ajuste * fator)
         elif qual_data == 'cabeca' and pd.notna(self.data_cabeca_ajustada):
             self.data_cabeca_ajustada += (ajuste * fator)
+
         self.atualizar_marcacoes()
         self.atualizar_info_label()
 
+    # Dentro da sua classe LabelingToolHybrid
     def atualizar_marcacoes(self):
-        if self.ax is None or self.df_grafico_atual is None:
+        """Remove as marcações antigas e desenha novas no gráfico existente."""
+
+        # MUDANÇA: "Guarda de proteção" para evitar o erro de NoneType
+        if self.ax is None or self.canvas_widget is None or self.df_grafico_atual is None:
+            print(
+                "AVISO: Tentativa de atualizar marcações sem um gráfico base. Operação ignorada.")
             return
+
+        # Limpa as marcações ("artistas") da iteração anterior
         if self.span_amarelo:
             self.span_amarelo.remove()
         if self.linha_cabeca:
             self.linha_cabeca.remove()
+        self.span_amarelo, self.linha_cabeca = None, None  # Reseta as referências
+
         try:
+            # Calcula as novas posições com base nas datas ajustadas
             start_pos_idx = (self.df_grafico_atual.index -
                              self.data_inicio_ajustada).to_series().abs().argmin()
             end_pos_idx = (self.df_grafico_atual.index -
                            self.data_fim_ajustada).to_series().abs().argmin()
+
             self.span_amarelo = self.ax.axvspan(
                 start_pos_idx, end_pos_idx, color='yellow', alpha=0.3)
+
             if pd.notna(self.data_cabeca_ajustada):
                 head_pos_idx = (self.df_grafico_atual.index -
                                 self.data_cabeca_ajustada).to_series().abs().argmin()
                 self.linha_cabeca = self.ax.axvline(
                     x=head_pos_idx, color='dodgerblue', linestyle='--', linewidth=1.2)
+
             self.canvas_widget.draw()
         except Exception as e:
             print(
