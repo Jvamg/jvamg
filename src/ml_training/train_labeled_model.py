@@ -2,11 +2,13 @@ import pandas as pd
 import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import numpy as np
 
 
-def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv', model_output_path: str = 'data/models/feature_model.joblib'):
+def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv', model_output_path: str = 'data/models/feature_pipeline.joblib'):
     """
     Carrega o dataset rotulado, treina um modelo RandomForestClassifier
     e salva o modelo treinado.
@@ -78,20 +80,27 @@ def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv
     print(f"Tamanho do conjunto de teste: {len(X_test)} amostras")
 
     # --- 4. Seleção e Treinamento do Modelo ---
-    print("\n--- 4. Treinamento do Modelo RandomForest ---")
-    # RandomForest é um conjunto de "árvores de decisão", ótimo para dados tabulares.
-    # n_estimators é o número de árvores na floresta.
-    model = RandomForestClassifier(
-        n_estimators=100, random_state=42, oob_score=True)
+    print("\n--- 4. Criação e Treinamento do Pipeline (Scaler + Modelo) ---")
+    # É uma boa prática normalizar as features, mesmo para RandomForest.
+    # Usaremos um Pipeline para encadear o normalizador (MinMaxScaler) e o classificador.
+    # MinMaxScaler transforma as features para o intervalo [0, 1].
+    pipeline = Pipeline([
+        ('scaler', MinMaxScaler()),
+        ('classifier', RandomForestClassifier(
+            n_estimators=100, random_state=42, oob_score=True))
+    ])
 
-    print("Treinando o modelo com os dados de treino...")
-    model.fit(X_train, y_train)
-    print("Modelo treinado com sucesso!")
-    print(f"Acurácia OOB (Out-of-Bag): {model.oob_score_:.4f}")
+    print("Treinando o pipeline com os dados de treino...")
+    pipeline.fit(X_train, y_train)
+    print("Pipeline treinado com sucesso!")
+
+    # Acessa o score OOB do classificador dentro do pipeline
+    oob_score = pipeline.named_steps['classifier'].oob_score_
+    print(f"Acurácia OOB (Out-of-Bag): {oob_score:.4f}")
 
     # --- 5. Avaliação de Performance ---
     print("\n--- 5. Avaliação de Performance no Conjunto de Teste ---")
-    y_pred = model.predict(X_test)
+    y_pred = pipeline.predict(X_test)
 
     # Acurácia
     accuracy = accuracy_score(y_test, y_pred)
@@ -115,19 +124,20 @@ def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv
     # Mostra o quão importante cada feature foi para a decisão do modelo
     feature_importances = pd.DataFrame({
         'feature': features,
-        'importance': model.feature_importances_
+        'importance': pipeline.named_steps['classifier'].feature_importances_
     }).sort_values('importance', ascending=False)
 
     print(feature_importances)
 
     # --- 7. Salvamento do Modelo ---
-    print(f"\n--- 7. Salvando o modelo treinado em '{model_output_path}' ---")
-    joblib.dump(model, model_output_path)
-    print("Modelo salvo com sucesso!")
+    print(f"\n--- 7. Salvando o pipeline treinado em '{model_output_path}' ---")
+    joblib.dump(pipeline, model_output_path)
+    print("Pipeline salvo com sucesso!")
     print("\n--- Pipeline de Treinamento Finalizado ---")
 
 
 if __name__ == '__main__':
     # Você pode alterar o caminho do dataset aqui se necessário
     caminho_dataset = 'data/datasets/enriched/dataset_final_ml.csv'
-    train_model(dataset_path=caminho_dataset)
+    caminho_saida_modelo = 'data/models/feature_pipeline.joblib'
+    train_model(dataset_path=caminho_dataset, model_output_path=caminho_saida_modelo)

@@ -25,6 +25,12 @@ def gerar_bull_flag(pontos=100):
     bandeira = np.linspace(2.0, 1.8, pontos//2)
     return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
 
+def normalize_window(window_data):
+    """Normaliza uma janela de dados para o intervalo [0, 1] (Min-Max scaling)."""
+    min_val, max_val = np.min(window_data), np.max(window_data)
+    if (max_val - min_val) > 0:
+        return (window_data - min_val) / (max_val - min_val)
+    return np.zeros_like(window_data)
 
 # --- ESTÁGIO 1: MONTAGEM DO DATASET BINÁRIO ---
 X = []
@@ -49,10 +55,7 @@ for index, linha in df_etiquetas_reais.iterrows():
             if not dados_janela.empty:
                 precos = dados_janela['Close'].values
                 janela_reamostrada = resample(precos, TAMANHO_JANELA_FIXO)
-                min_val, max_val = np.min(
-                    janela_reamostrada), np.max(janela_reamostrada)
-                janela_normalizada = (janela_reamostrada - min_val) / (max_val - min_val) if (
-                    max_val - min_val) > 0 else np.zeros(TAMANHO_JANELA_FIXO)
+                janela_normalizada = normalize_window(janela_reamostrada)
 
                 # --- A CORREÇÃO FINAL ESTÁ AQUI ---
                 # Usamos .flatten() para garantir que o array seja sempre 1D (formato (100,))
@@ -68,9 +71,9 @@ print(
 print("\nProcessando exemplos NEGATIVOS (Sintéticos)...")
 for i in range(num_exemplos_reais_validos):
     if np.random.rand() > 0.5:
-        padrao_gerado = gerar_no_pattern()
+        padrao_gerado = normalize_window(gerar_no_pattern())
     else:
-        padrao_gerado = gerar_bull_flag()
+        padrao_gerado = normalize_window(gerar_bull_flag())
     X.append(padrao_gerado)  # Funções sintéticas já retornam 1D (100,)
     y.append(0)
 

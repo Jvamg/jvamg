@@ -63,6 +63,13 @@ def gerar_bear_flag(pontos=100):
     bandeira = np.linspace(1.0, 1.2, pontos//2)
     return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
 
+def normalize_window(window_data):
+    """Normaliza uma janela de dados para o intervalo [0, 1] (Min-Max scaling)."""
+    min_val, max_val = np.min(window_data), np.max(window_data)
+    if (max_val - min_val) > 0:
+        return (window_data - min_val) / (max_val - min_val)
+    return np.zeros_like(window_data)
+
 
 # --- Montagem do Dataset Sintético ---
 X_sintetico, y_sintetico = [], []
@@ -70,15 +77,15 @@ num_amostras_sinteticas = 1000  # Geramos bastante dados sintéticos
 print(
     f"FASE 1: Gerando {num_amostras_sinteticas * NUM_CLASSES} amostras de dados sintéticos...")
 for _ in range(num_amostras_sinteticas):
-    X_sintetico.append(gerar_head_and_shoulders())
+    X_sintetico.append(normalize_window(gerar_head_and_shoulders()))
     y_sintetico.append(0)
-    X_sintetico.append(gerar_double_top())
+    X_sintetico.append(normalize_window(gerar_double_top()))
     y_sintetico.append(1)
-    X_sintetico.append(gerar_no_pattern())
+    X_sintetico.append(normalize_window(gerar_no_pattern()))
     y_sintetico.append(2)
-    X_sintetico.append(gerar_bull_flag())
+    X_sintetico.append(normalize_window(gerar_bull_flag()))
     y_sintetico.append(3)
-    X_sintetico.append(gerar_bear_flag())
+    X_sintetico.append(normalize_window(gerar_bear_flag()))
     y_sintetico.append(4)
 
 X_sintetico = np.array(X_sintetico).reshape(-1, TAMANHO_JANELA_FIXO, 1)
@@ -128,10 +135,7 @@ for index, linha in df_etiquetas_reais.iterrows():
         if not dados_janela.empty:
             precos = dados_janela['Close'].values
             janela_reamostrada = resample(precos, TAMANHO_JANELA_FIXO)
-            min_val, max_val = np.min(
-                janela_reamostrada), np.max(janela_reamostrada)
-            janela_normalizada = (janela_reamostrada - min_val) / (max_val - min_val) if (
-                max_val - min_val) > 0 else np.zeros(TAMANHO_JANELA_FIXO)
+            janela_normalizada = normalize_window(janela_reamostrada)
             X_real.append(janela_normalizada)
             y_real.append(mapa_etiquetas_str_para_int[linha['tipo_padrao']])
     except Exception as e:
