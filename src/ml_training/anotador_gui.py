@@ -186,17 +186,34 @@ class LabelingToolHybrid(tk.Tk):
                 f"AVISO: Não foi possível atualizar as marcações no gráfico. Erro: {e}")
 
     def plotar_grafico(self):
+        """Função central que busca dados, limpa e plota o gráfico."""
+        # 1. Limpeza de recursos da iteração anterior
         if self.canvas_widget:
             self.canvas_widget.get_tk_widget().destroy()
         if self.fig:
             plt.close(self.fig)
 
+        # NOVO: Reset explícito do estado do gráfico
+        # Isso garante que não haja "lixo" de um padrão anterior se a plotagem falhar.
+        self.fig = None
+        self.ax = None
+        self.df_grafico_atual = None
+        self.canvas_widget = None
+        self.span_amarelo = None
+        self.linha_cabeca = None
+
+        # 2. O resto da função continua como antes
         padrao = self.padrao_atual_info
         data_inicio, data_fim, intervalo = self.data_inicio_ajustada, self.data_fim_ajustada, padrao[
             'intervalo']
+
         duracao = data_fim - data_inicio
-        buffer = max(pd.Timedelta(days=5), duracao * 1.5) if intervalo in [
-            '1h', '4h'] else max(pd.Timedelta(weeks=4), duracao * 1.0)
+        if intervalo in ['1h', '4h']:
+            buffer = max(pd.Timedelta(days=5), duracao * 1.5)
+        elif intervalo == '1d':
+            buffer = max(pd.Timedelta(weeks=4), duracao * 1.0)
+        else:
+            buffer = duracao * 0.5
         data_inicio_contexto, data_fim_contexto = data_inicio - buffer, data_fim + buffer
 
         print(
@@ -210,13 +227,10 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
-        # --- ORDEM DE LIMPEZA CORRIGIDA ---
-        # 1. Primeiro, trata o MultiIndex, se existir.
+        # Ordem correta de limpeza de colunas e índice
         if isinstance(df_grafico.columns, pd.MultiIndex):
             df_grafico.columns = df_grafico.columns.get_level_values(0)
-        # 2. AGORA, com nomes de colunas como strings, normaliza para minúsculas.
         df_grafico.columns = [col.lower() for col in df_grafico.columns]
-        # 3. E finalmente, sanitiza o índice de data.
         df_grafico.index = pd.to_datetime(df_grafico.index).tz_localize(None)
 
         cols_to_validate = ['open', 'high', 'low', 'close']
@@ -232,17 +246,22 @@ class LabelingToolHybrid(tk.Tk):
             self.avancar_e_salvar()
             return
 
+        # Armazena o DataFrame do gráfico para uso na atualização das marcações
         self.df_grafico_atual = df_grafico.copy()
 
         try:
             self.fig, axlist = mpf.plot(
                 self.df_grafico_atual, type='candle', style='charles', returnfig=True, figsize=(12, 8))
             self.ax = axlist[0]
-            self.atualizar_marcacoes()  # Delega o desenho inicial das marcações
+
+            # Delega o desenho inicial das marcações
+            self.atualizar_marcacoes()
+
             canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
             self.canvas_widget = canvas
             canvas.draw()
             canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
         except Exception as e:
             print(f"ERRO CRÍTICO ao plotar o gráfico: {e}")
             self.df_trabalho.loc[self.indice_atual, 'label_humano'] = -1
