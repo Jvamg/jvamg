@@ -244,6 +244,20 @@ class LabelingToolHybrid(tk.Tk):
             if pd.notna(self.data_cabeca_ajustada):
                 self.df_trabalho.loc[self.indice_atual,
                                      'data_cabeca'] = self.data_cabeca_ajustada
+            try:
+                intervalo_str = self.padrao_atual_info['intervalo']
+                # Converte '4h', '1d' etc.
+                timedelta_intervalo = pd.to_timedelta(intervalo_str)
+
+                nova_duracao = (self.data_fim_ajustada -
+                                self.data_inicio_ajustada) / timedelta_intervalo
+
+                # Atualiza a coluna duracao_em_velas com o novo valor
+                self.df_trabalho.loc[self.indice_atual,
+                                     'duracao_em_velas'] = int(nova_duracao)
+            except Exception as e:
+                print(
+                    f"AVISO: Não foi possível recalcular a duração. Erro: {e}")
             self.df_trabalho.loc[self.indice_atual, 'label_humano'] = label
             self.avancar_e_salvar()
         elif key == 'q':
