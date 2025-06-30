@@ -1,3 +1,8 @@
-features distancia de um ombro pra cabeça pro outro
+features:
+distancia de um ombro pra cabeça pro outro
 relaçao da altura
 ruido
+extensao do ombro
+diferença de altura de um ombro pro outro cerca de -10%
+angulação da neckline
+altura neckline com ultimo e primeiro vale
