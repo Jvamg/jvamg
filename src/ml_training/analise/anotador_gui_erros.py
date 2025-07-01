@@ -335,7 +335,7 @@ class ErrorCorrectionTool(tk.Tk):
 
 if __name__ == '__main__':
     # --- CAMINHOS DOS ARQUIVOS ---
-    ARQUIVO_DE_ERROS = 'analise_de_erros.csv'
+    ARQUIVO_DE_ERROS = 'data/datasets/erros/analise_de_erros.csv'
     ARQUIVO_MESTRE = 'data/datasets/enriched/dataset_final_ml.csv'
 
     # Criador de arquivos de exemplo

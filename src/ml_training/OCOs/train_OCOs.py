@@ -192,8 +192,9 @@ def main():
     erros_completos_df['previsao_modelo'] = erros_df['previsao_modelo']
 
     try:
-        erros_completos_df.to_csv('analise_de_erros.csv', index=False)
-        print("\nArquivo 'analise_de_erros.csv' salvo com sucesso!")
+        erros_completos_df.to_csv(
+            'data/datasets/erros/analise_de_erros.csv', index=False)
+        print("\nArquivo 'data/datasets/erros/analise_de_erros.csv' salvo com sucesso!")
         print("Sua tarefa agora é abrir este arquivo e começar o trabalho de detetive: olhe os gráficos correspondentes a cada erro.")
     except Exception as e:
         print(f"\nNão foi possível salvar o arquivo de erros: {e}")
