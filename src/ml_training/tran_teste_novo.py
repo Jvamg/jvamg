@@ -57,6 +57,18 @@ def main():
 
     print(
         f"{df_limpo.shape[0]} linhas válidas e completas restantes para o treinamento.")
+
+    linhas_antes_regra = len(df_limpo)
+    print(f"\nAplicando a regra de que a cabeça deve ser maior que os ombros...")
+
+    condicao_cabeca = (df_limpo['ratio_ombro_esquerdo'] < 1.0) & (
+        df_limpo['ratio_ombro_direito'] < 1.0)
+    df_limpo = df_limpo[condicao_cabeca]
+
+    linhas_removidas = linhas_antes_regra - len(df_limpo)
+    print(f"{linhas_removidas} padrões foram removidos por violarem a regra da cabeça.")
+    print(f"{len(df_limpo)} padrões logicamente válidos restantes.")
+
     if df_limpo.shape[0] < 50:
         print("ERRO: Poucos dados restantes após a limpeza.")
         return
@@ -105,23 +117,34 @@ def main():
     model.fit(X_train_scaled, y_train)
     print("Treinamento do modelo otimizado concluído.")
 
-    # --- Passo 7: Avaliar o Modelo OTIMIZADO ---
+    # --- Passo 7: Avaliar o Modelo OTIMIZADO com Limiar Ajustável ---
     print("\n--- AVALIAÇÃO FINAL DO MODELO OTIMIZADO ---")
-    y_pred = model.predict(X_test_scaled)
 
-    print(f"\nAcurácia no Set de Teste: {accuracy_score(y_test, y_pred):.2%}")
+    # === PONTO DE AJUSTE: Mude o valor do limiar aqui para experimentar ===
+    # Valor padrão é 0.5. Tente 0.6, 0.7, 0.75 para ser mais exigente.
+    meu_limiar = 0.75
+    print(f"\nUsando um limiar de decisão customizado de: {meu_limiar}")
 
-    print("\nRelatório de Classificação:")
-    print(classification_report(y_test, y_pred,
+    y_probs = model.predict_proba(X_test_scaled)
+
+    probabilidades_de_ser_valido = y_probs[:, 1]
+
+    y_pred_ajustado = (probabilidades_de_ser_valido >= meu_limiar).astype(int)
+
+    print(
+        f"\nAcurácia no Set de Teste: {accuracy_score(y_test, y_pred_ajustado):.2%}")
+
+    print("\nRelatório de Classificação (com limiar ajustado):")
+    print(classification_report(y_test, y_pred_ajustado,
           target_names=['Inválido (0)', 'Válido (1)']))
 
-    print("\nMatriz de Confusão:")
-    cm = confusion_matrix(y_test, y_pred)
+    print("\nMatriz de Confusão (com limiar ajustado):")
+    cm = confusion_matrix(y_test, y_pred_ajustado)
     plt.figure(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['Previsto: Inválido', 'Previsto: Válido'],
                 yticklabels=['Real: Inválido', 'Real: Válido'])
-    plt.title('Matriz de Confusão - Modelo LightGBM Otimizado')
+    plt.title(f'Matriz de Confusão (Limiar = {meu_limiar})')
     plt.ylabel('Rótulo Verdadeiro')
     plt.xlabel('Rótulo Previsto')
     plt.show()
@@ -148,7 +171,7 @@ def main():
 
     df_teste_analise = X_test.copy()
     df_teste_analise['label_real'] = y_test
-    df_teste_analise['previsao_modelo'] = y_pred
+    df_teste_analise['previsao_modelo'] = y_pred_ajustado
 
     # Filtrando apenas as linhas onde o modelo errou
     erros_df = df_teste_analise[df_teste_analise['label_real']
