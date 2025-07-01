@@ -199,7 +199,7 @@ def main():
     except Exception as e:
         print(f"\nNão foi possível salvar o arquivo de erros: {e}")
 
-    caminho_modelo_salvo = 'modelo_qualidade_pattens.joblib'
+    caminho_modelo_salvo = 'data/models/modelo_qualidade_pattens.joblib'
     print(f"\n--- Salvando o modelo final em '{caminho_modelo_salvo}' ---")
 
     modelo_para_salvar = {
