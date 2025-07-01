@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import matplotlib.pyplot as plt
 import seaborn as sns
+import joblib
 
 
 def main():
@@ -142,13 +143,9 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    # Substitua o Passo 8 inteiro por este:
-
     # --- Passo 8: Análise de Erros (Versão Corrigida) ---
     print("\n--- INICIANDO ANÁLISE DE ERROS ---")
 
-    # Juntando os dados de teste com as previsões para facilitar a análise
-    # REMOVEMOS o .reset_index() para manter os índices originais do df_limpo
     df_teste_analise = X_test.copy()
     df_teste_analise['label_real'] = y_test
     df_teste_analise['previsao_modelo'] = y_pred
@@ -168,10 +165,7 @@ def main():
     print(
         f"Total de Falsos Negativos (padrões bons que o modelo rejeitou): {len(falsos_negativos)}")
 
-    # Agora, esta linha vai funcionar, pois os índices em erros_df correspondem aos de df_limpo
-    # Usamos o índice de erros_df para buscar as linhas completas (com ticker, datas, etc.)
     erros_completos_df = df_limpo.loc[erros_df.index]
-    # Adicionamos a previsão ao lado
     erros_completos_df['previsao_modelo'] = erros_df['previsao_modelo']
 
     try:
@@ -180,6 +174,18 @@ def main():
         print("Sua tarefa agora é abrir este arquivo e começar o trabalho de detetive: olhe os gráficos correspondentes a cada erro.")
     except Exception as e:
         print(f"\nNão foi possível salvar o arquivo de erros: {e}")
+
+    caminho_modelo_salvo = 'modelo_qualidade_pattens.joblib'
+    print(f"\n--- Salvando o modelo final em '{caminho_modelo_salvo}' ---")
+
+    modelo_para_salvar = {
+        'model': model,
+        'scaler': scaler,
+        'features': colunas_features
+    }
+
+    joblib.dump(modelo_para_salvar, caminho_modelo_salvo)
+    print("Modelo salvo com sucesso!")
 
 
 if __name__ == '__main__':
