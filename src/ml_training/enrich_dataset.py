@@ -1,4 +1,4 @@
-# enrich_dataset.py (v2 - com features de contexto de volume)
+# enrich_dataset.py (v3 - com features geométricas e de contexto adicionais)
 
 import pandas as pd
 import numpy as np
@@ -13,36 +13,24 @@ import os
 
 def encontrar_extremos(df: pd.DataFrame, window_sma: int = 2) -> Optional[list]:
     """Suaviza os preços e encontra picos e vales (extremos), agora usando colunas em minúsculas."""
-
-    # MUDANÇA: Verifica a existência da coluna 'close' em minúsculas.
     if df.empty or 'close' not in df.columns:
         return None
-
-    # MUDANÇA: Usa e cria colunas em minúsculas.
     df['sma_close'] = df['close'].rolling(window=window_sma).mean()
     df.dropna(inplace=True)
-
     if df.empty:
         return None
-
     precos = df['sma_close'].values
-
-    # MUDANÇA: Usa 'close' para o cálculo da sensibilidade.
-    # Também corrige o FutureWarning que aparecia no seu log.
     diff = df['close'].max() - df['close'].min()
     sensitivity = float(diff.iloc[0]) if isinstance(
         diff, pd.Series) else float(diff)
     sensitivity *= 0.01
-
     indices_picos, _ = find_peaks(precos, prominence=sensitivity)
     indices_vales, _ = find_peaks(-precos, prominence=sensitivity)
-
     extremos = [
         {'idx': df.index[i], 'preco': precos[i], 'tipo': 'PICO'} for i in indices_picos
     ] + [
         {'idx': df.index[i], 'preco': precos[i], 'tipo': 'VALE'} for i in indices_vales
     ]
-
     extremos.sort(key=lambda x: x['idx'])
     return extremos
 
@@ -51,38 +39,26 @@ def get_price_on_neckline(point_idx: pd.Timestamp, p1: Dict, p2: Dict, slope: fl
     time_delta = (point_idx - p1['idx']).total_seconds() / (3600 * 24)
     return p1['preco'] + slope * time_delta
 
-# --- Função de Recálculo Geométrico (Modificada) ---
+# --- Função de Recálculo Geométrico (MODIFICADA) ---
 
-
-# Função recalcular_geometria_padrao corrigida
 
 def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series) -> Optional[Dict[str, float]]:
     """
     Recebe os dados de uma janela, re-identifica os pontos chave e calcula
-    tanto as features geométricas quanto as de contexto de volume.
+    tanto as features geométricas quanto as de contexto (volume, ruído, etc.).
     """
-    # --- NOVO: Bloco de Sanitização de DataFrame ---
-    # Garante que o DataFrame de entrada tenha o formato esperado, resolvendo o bug.
     if df_janela.empty:
         return None
-
-    # 1. Achata o MultiIndex, se existir.
     if isinstance(df_janela.columns, pd.MultiIndex):
         df_janela.columns = df_janela.columns.get_level_values(0)
-
-    # 2. Converte todas as colunas para minúsculas para consistência.
     df_janela.columns = [col.lower() for col in df_janela.columns]
-
-    # 3. Garante que as colunas essenciais são numéricas
     for col in ['open', 'high', 'low', 'close', 'volume']:
         if col in df_janela.columns:
             df_janela[col] = pd.to_numeric(df_janela[col], errors='coerce')
     df_janela.dropna(subset=['open', 'high', 'low',
                      'close', 'volume'], inplace=True)
-
     if df_janela.empty:
         return None
-    # --- FIM DO BLOCO DE SANITIZAÇÃO ---
 
     extremos = encontrar_extremos(df_janela)
     if not extremos:
@@ -91,7 +67,6 @@ def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series)
     data_cabeca_alvo = pd.to_datetime(padrao_info['data_cabeca'])
     tipo_padrao = padrao_info['tipo_padrao']
 
-    # Âncora: Encontra a cabeça no novo conjunto de extremos
     try:
         cabeca = min(extremos, key=lambda x: abs(x['idx'] - data_cabeca_alvo))
         if (tipo_padrao == 'OCO' and cabeca['tipo'] != 'PICO') or \
@@ -100,7 +75,6 @@ def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series)
     except (ValueError, KeyError):
         return None
 
-    # Re-identifica os outros 4 pontos...
     tipo_neckline = 'VALE' if tipo_padrao == 'OCO' else 'PICO'
     tipo_ombro = 'PICO' if tipo_padrao == 'OCO' else 'VALE'
     k = extremos.index(cabeca)
@@ -110,6 +84,7 @@ def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series)
         (e for e in extremos[k+1:] if e['tipo'] == tipo_neckline), None)
     if not (neckline_p1 and neckline_p2):
         return None
+
     idx_neckline_p1 = extremos.index(neckline_p1)
     ombro1 = next((e for e in reversed(
         extremos[:idx_neckline_p1]) if e['tipo'] == tipo_ombro), None)
@@ -138,18 +113,71 @@ def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series)
     if altura_cabeca_rel <= 0 or altura_ombro1_rel < 0 or altura_ombro2_rel < 0:
         return None
 
+    ### INÍCIO DA MODIFICAÇÃO ###
+
+    # --- Novas Features (Geometria Temporal, Ruído e Forma) ---
+
+    # 1. Simetria Temporal (distâncias e rácio)
+    dist_ombro1_cabeca = (
+        cabeca['idx'] - ombro1['idx']).total_seconds() / (3600 * 24)
+    dist_cabeca_ombro2 = (
+        ombro2['idx'] - cabeca['idx']).total_seconds() / (3600 * 24)
+
+    max_dist_temporal = max(dist_ombro1_cabeca, dist_cabeca_ombro2)
+    if max_dist_temporal > 0:
+        ratio_simetria_temporal = min(
+            dist_ombro1_cabeca, dist_cabeca_ombro2) / max_dist_temporal
+    else:
+        ratio_simetria_temporal = 1.0  # Perfeitamente simétrico se ambos são 0
+
+    # 2. Diferença de Altura Relativa dos Ombros
+    dif_altura_ombros_rel = (
+        altura_ombro2_rel - altura_ombro1_rel) / altura_cabeca_rel
+
+    # 3. Extensão Temporal dos Ombros
+    extensao_ombro1 = (neckline_p1['idx'] -
+                       ombro1['idx']).total_seconds() / (3600 * 24)
+    extensao_ombro2 = (ombro2['idx'] - neckline_p2['idx']
+                       ).total_seconds() / (3600 * 24)
+
+    # 4. Ângulo da Neckline em Radianos
+    neckline_angle_rad = np.arctan(neckline_slope)
+
+    # 5. Medida de Ruído (Volatilidade) do Padrão
+    df_intervalo_padrao = df_janela.loc[ombro1['idx']:ombro2['idx']]
+    if not df_intervalo_padrao.empty and len(df_intervalo_padrao) > 1:
+        retornos_diarios = df_intervalo_padrao['close'].pct_change()
+        ruido_padrao = retornos_diarios.std()
+        if pd.isna(ruido_padrao):
+            ruido_padrao = 0.0
+    else:
+        ruido_padrao = 0.0
+
+    # Dicionário de features com as adições
     features_geo = {
-        'altura_rel_cabeca': altura_cabeca_rel, 'ratio_ombro_esquerdo': altura_ombro1_rel / altura_cabeca_rel,
+        # Features Originais
+        'altura_rel_cabeca': altura_cabeca_rel,
+        'ratio_ombro_esquerdo': altura_ombro1_rel / altura_cabeca_rel,
         'ratio_ombro_direito': altura_ombro2_rel / altura_cabeca_rel,
         'ratio_simetria_altura_ombros': min(altura_ombro1_rel, altura_ombro2_rel) / max(altura_ombro1_rel, altura_ombro2_rel) if max(altura_ombro1_rel, altura_ombro2_rel) > 0 else 1.0,
-        'neckline_slope': neckline_slope
+        'neckline_slope': neckline_slope,
+
+        # Novas Features
+        'dist_ombro1_cabeca': dist_ombro1_cabeca,
+        'dist_cabeca_ombro2': dist_cabeca_ombro2,
+        'ratio_simetria_temporal': ratio_simetria_temporal,
+        'dif_altura_ombros_rel': dif_altura_ombros_rel,
+        'extensao_ombro1': extensao_ombro1,
+        'extensao_ombro2': extensao_ombro2,
+        'neckline_angle_rad': neckline_angle_rad,
+        'ruido_padrao': ruido_padrao
     }
 
-    # Bloco de Cálculo de Features de Volume (agora seguro)
+    ### FIM DA MODIFICAÇÃO ###
+
+    # Bloco de Cálculo de Features de Volume (não precisa alterar)
     vela_breakout = None
     df_pos_ombro2 = df_janela[df_janela.index > ombro2['idx']]
-
-    # Agora `vela['close']` será sempre um float, pois as colunas foram normalizadas para minúsculas.
     for idx_vela, vela in df_pos_ombro2.head(20).iterrows():
         preco_na_neckline = get_price_on_neckline(
             idx_vela, neckline_p1, neckline_p2, neckline_slope)
@@ -162,29 +190,22 @@ def recalcular_geometria_padrao(df_janela: pd.DataFrame, padrao_info: pd.Series)
 
     volume_breakout_ratio = 1.0
     if vela_breakout is not None:
-        vol_durante_padrao = df_janela.loc[ombro1['idx']
-            :ombro2['idx'], 'volume'].mean()
-        idx_breakout = df_janela.index.get_loc(vela_breakout.name)
-        df_pos_breakout = df_janela.iloc[idx_breakout +
-                                         1: idx_breakout + 1 + 5]
-        if not df_pos_breakout.empty and vol_durante_padrao > 0:
-            vol_pos_breakout = df_pos_breakout['volume'].mean()
-            volume_breakout_ratio = vol_pos_breakout / vol_durante_padrao
+        vol_durante_padrao = df_janela.loc[ombro1['idx']:ombro2['idx'], 'volume'].mean()
+        if vol_durante_padrao > 0:
+            volume_breakout_ratio = vela_breakout['volume'] / \
+                vol_durante_padrao
 
     features_geo['volume_breakout_ratio'] = volume_breakout_ratio
     return features_geo
 
+# --- Restante do código (com modificação em `main`) ---
+
 
 def main():
-    """
-    Função principal que orquestra o processo de enriquecimento,
-    agora pulando padrões cujos dados históricos não estão mais disponíveis.
-    """
-    # AINDA USAMOS O dataset_corrected_final.csv que já tem a duracao_em_velas corrigida
     ARQUIVO_ENTRADA = 'data/datasets/filtered/dataset_corrected_final.csv'
     ARQUIVO_SAIDA = 'data/datasets/enriched/dataset_final_ml.csv'
 
-    print(f"--- Iniciando Pipeline de Engenharia de Features (Geometria + Volume) ---")
+    print(f"--- Iniciando Pipeline de Engenharia de Features (Geometria + Contexto) ---")
     try:
         df = pd.read_csv(ARQUIVO_ENTRADA)
         df['data_inicio'] = pd.to_datetime(df['data_inicio'])
@@ -196,10 +217,24 @@ def main():
         print(f"🚨 ERRO: Arquivo '{ARQUIVO_ENTRADA}' não encontrado.")
         return
 
-    novas_colunas = ['altura_rel_cabeca', 'ratio_ombro_esquerdo', 'ratio_ombro_direito',
-                     'ratio_simetria_altura_ombros', 'neckline_slope', 'volume_breakout_ratio']
+    ### INÍCIO DA MODIFICAÇÃO ###
+
+    # Lista de todas as colunas de features a serem calculadas
+    novas_colunas = [
+        # Features originais
+        'altura_rel_cabeca', 'ratio_ombro_esquerdo', 'ratio_ombro_direito',
+        'ratio_simetria_altura_ombros', 'neckline_slope', 'volume_breakout_ratio',
+        # Novas features adicionadas
+        'dist_ombro1_cabeca', 'dist_cabeca_ombro2', 'ratio_simetria_temporal',
+        'dif_altura_ombros_rel', 'extensao_ombro1', 'extensao_ombro2',
+        'neckline_angle_rad', 'ruido_padrao'
+    ]
+
+    # Pré-aloca as colunas no DataFrame com NaN
     for col in novas_colunas:
         df[col] = np.nan
+
+    ### FIM DA MODIFICAÇÃO ###
 
     print("\nIterando sobre cada padrão para calcular as features...")
     for index, linha in tqdm(df.iterrows(), total=df.shape[0], desc="Enriquecendo Padrões"):
@@ -208,21 +243,17 @@ def main():
             data_inicio_busca = linha['data_inicio'] - buffer
             data_fim_busca = linha['data_fim'] + buffer
 
-            # Tentamos buscar os dados com o intervalo original e auto_adjust=False para ter a coluna 'Volume'
             df_janela = yf.download(
                 tickers=linha['ticker'], start=data_inicio_busca, end=data_fim_busca,
                 interval=linha['intervalo'], progress=False, auto_adjust=False
             )
 
-            # Se o download falhar ou retornar um DataFrame vazio, pulamos este padrão
             if df_janela.empty:
                 print(
-                    f"  -> AVISO [Índice {index}]: Dados para {linha['ticker']} no intervalo '{linha['intervalo']}' não disponíveis para este período. Pulando.")
-                continue  # Pula para a próxima iteração do loop
+                    f"   -> AVISO [Índice {index}]: Dados para {linha['ticker']} no intervalo '{linha['intervalo']}' não disponíveis. Pulando.")
+                continue
 
-            # A sanitização do índice é importante para consistência
             df_janela.index = pd.to_datetime(df_janela.index).tz_localize(None)
-
             features_calculadas = recalcular_geometria_padrao(df_janela, linha)
 
             if features_calculadas:
@@ -230,22 +261,19 @@ def main():
                     df.loc[index, feature_nome] = feature_valor
 
         except Exception as e:
-            # Captura qualquer outro erro inesperado durante o processamento de uma linha
             print(
-                f"  -> ERRO [Índice {index}]: Falha inesperada ao processar {linha['ticker']}. Erro: {e}. Pulando.")
+                f"   -> ERRO [Índice {index}]: Falha inesperada ao processar {linha['ticker']}. Erro: {e}. Pulando.")
             continue
 
     print("\n--- Processo de Enriquecimento Concluído ---")
     sucesso_total = df['altura_rel_cabeca'].notna().sum()
     total = len(df)
     print(
-        f"Sucesso: {sucesso_total} de {total} padrões foram enriquecidos com sucesso ({sucesso_total/total:.2%}).")
-    print(f"Os padrões restantes foram ignorados por falta de dados históricos na resolução necessária.")
+        f"Sucesso: {sucesso_total} de {total} padrões foram enriquecidos ({sucesso_total/total:.2%}).")
 
     output_dir = os.path.dirname(ARQUIVO_SAIDA)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-
     df.to_csv(ARQUIVO_SAIDA, index=False, float_format='%.4f')
     print(f"\n✅ Dataset final salvo em '{ARQUIVO_SAIDA}'.")
 

@@ -43,16 +43,14 @@ def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv
 
     # Define as 'pistas' (features) que o modelo usará para aprender
     features = [
-        # Features de Escala que já tínhamos
-        'duracao_em_velas',
-        'intervalo_em_minutos',
-
-        # Novas Features Geométricas (o "ouro")
-        'altura_rel_cabeca',
-        'ratio_ombro_esquerdo',
-        'ratio_ombro_direito',
-        'ratio_simetria_altura_ombros',
-        'neckline_slope'
+        # Features Originais
+        'altura_rel_cabeca', 'ratio_ombro_esquerdo', 'ratio_ombro_direito',
+        'ratio_simetria_altura_ombros', 'neckline_slope', 'volume_breakout_ratio',
+        'intervalo_em_minutos', 'duracao_em_velas',
+        # Novas Features Adicionadas
+        'dist_ombro1_cabeca', 'dist_cabeca_ombro2', 'ratio_simetria_temporal',
+        'dif_altura_ombros_rel', 'extensao_ombro1', 'extensao_ombro2',
+        'neckline_angle_rad', 'ruido_padrao'
     ]
 
     print(f"Exemplos antes da limpeza de features: {len(df_clean)}")
@@ -130,7 +128,8 @@ def train_model(dataset_path: str = 'data/datasets/enriched/dataset_final_ml.csv
     print(feature_importances)
 
     # --- 7. Salvamento do Modelo ---
-    print(f"\n--- 7. Salvando o pipeline treinado em '{model_output_path}' ---")
+    print(
+        f"\n--- 7. Salvando o pipeline treinado em '{model_output_path}' ---")
     joblib.dump(pipeline, model_output_path)
     print("Pipeline salvo com sucesso!")
     print("\n--- Pipeline de Treinamento Finalizado ---")
@@ -140,4 +139,5 @@ if __name__ == '__main__':
     # Você pode alterar o caminho do dataset aqui se necessário
     caminho_dataset = 'data/datasets/enriched/dataset_final_ml.csv'
     caminho_saida_modelo = 'data/models/feature_pipeline.joblib'
-    train_model(dataset_path=caminho_dataset, model_output_path=caminho_saida_modelo)
+    train_model(dataset_path=caminho_dataset,
+                model_output_path=caminho_saida_modelo)

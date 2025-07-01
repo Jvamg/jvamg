@@ -10,7 +10,7 @@ from keras.layers import LSTM, Dense, Dropout
 from keras.callbacks import ModelCheckpoint
 
 # --- PARÂMETROS GERAIS ---
-ARQUIVO_ETIQUETAS_REAIS = 'dataset_verificado.csv'
+ARQUIVO_ETIQUETAS_REAIS = 'data/datasets/enriched/dataset_final_ml.csv'
 TAMANHO_JANELA_FIXO = 100
 
 # --- FUNÇÕES DE GERAÇÃO SINTÉTICA ---
@@ -25,12 +25,14 @@ def gerar_bull_flag(pontos=100):
     bandeira = np.linspace(2.0, 1.8, pontos//2)
     return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
 
+
 def normalize_window(window_data):
     """Normaliza uma janela de dados para o intervalo [0, 1] (Min-Max scaling)."""
     min_val, max_val = np.min(window_data), np.max(window_data)
     if (max_val - min_val) > 0:
         return (window_data - min_val) / (max_val - min_val)
     return np.zeros_like(window_data)
+
 
 # --- ESTÁGIO 1: MONTAGEM DO DATASET BINÁRIO ---
 X = []

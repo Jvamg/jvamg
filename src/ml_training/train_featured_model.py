@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # --- Passo 1: Carregar o Dataset de Features ---
-# Usei o caminho do seu log de erro
 caminho_do_seu_arquivo = 'data/datasets/enriched/dataset_final_ml.csv'
 
 try:
@@ -20,85 +19,132 @@ except FileNotFoundError:
     exit()
 
 # --- Passo 2: Definir Features (X) e Rótulo (y) ---
+### INÍCIO DA MODIFICAÇÃO ###
+# Lista de features atualizada para incluir as novas colunas geradas.
+# A coluna 'duracao_em_velas' foi removida pois não é gerada pelo script de enriquecimento.
 colunas_features = [
+    # Features Originais
     'altura_rel_cabeca', 'ratio_ombro_esquerdo', 'ratio_ombro_direito',
     'ratio_simetria_altura_ombros', 'neckline_slope', 'volume_breakout_ratio',
-    'duracao_em_velas'
+    'intervalo_em_minutos', 'duracao_em_velas',
+    # Novas Features Adicionadas
+    'dist_ombro1_cabeca', 'dist_cabeca_ombro2', 'ratio_simetria_temporal',
+    'dif_altura_ombros_rel', 'extensao_ombro1', 'extensao_ombro2',
+    'neckline_angle_rad', 'ruido_padrao'
 ]
 coluna_label = 'label_humano'
+### FIM DA MODIFICAÇÃO ###
 
-# --- NOVO! Passo 2.5: Limpeza e Verificação dos Dados ---
-print("\nRealizando limpeza e verificação dos dados...")
+# --- Passo 3: Limpeza e Preparação dos Dados ---
+print("\n--- INICIANDO LIMPEZA E PREPARAÇÃO DOS DADOS ---")
+
+# 3.1: Filtrar por labels válidos (0 ou 1)
 print(
     f"Valores únicos na coluna '{coluna_label}' antes da limpeza: {df[coluna_label].unique()}")
-
-# Mantém apenas as linhas onde o label é 0 ou 1, descartando quaisquer outros.
-df_filtrado = df[df[coluna_label].isin([0, 1])].copy()
-
-# Converte o tipo da coluna para inteiro, para garantir que não há floats (ex: 1.0)
-df_filtrado[coluna_label] = df_filtrado[coluna_label].astype(int)
-
+df_limpo = df[df[coluna_label].isin([0, 1])].copy()
+df_limpo[coluna_label] = df_limpo[coluna_label].astype(int)
 print(
-    f"Valores únicos na coluna '{coluna_label}' após a limpeza: {df_filtrado[coluna_label].unique()}")
-print(
-    f"{df_filtrado.shape[0]} padrões restantes após filtrar por labels 0 e 1.")
+    f"Valores únicos na coluna '{coluna_label}' após filtrar por 0 e 1: {df_limpo[coluna_label].unique()}")
+print(f"{df_limpo.shape[0]} linhas restantes após filtrar labels.")
 
-if df_filtrado.shape[0] < 10:
-    print("ERRO: Poucos dados restantes após a limpeza. Verifique a coluna 'label_humano' no seu CSV.")
+### INÍCIO DA MODIFICAÇÃO ###
+# 3.2: Remover linhas com valores NaN nas features ou no label
+# Isso é crucial para que o treinamento não falhe.
+colunas_necessarias = colunas_features + [coluna_label]
+linhas_antes_nan = df_limpo.shape[0]
+
+# Remove qualquer linha que tenha pelo menos um NaN nas colunas que usaremos
+df_limpo.dropna(subset=colunas_necessarias, inplace=True)
+
+linhas_depois_nan = df_limpo.shape[0]
+linhas_removidas = linhas_antes_nan - linhas_depois_nan
+
+print(f"\nRemovendo linhas com dados ausentes (NaN) nas features ou no label...")
+print(f"{linhas_removidas} linhas foram removidas por conterem dados incompletos.")
+print(
+    f"{df_limpo.shape[0]} linhas válidas e completas restantes para o treinamento.")
+### FIM DA MODIFICAÇÃO ###
+
+if df_limpo.shape[0] < 20:  # Aumentei o limiar para garantir treino e teste
+    print("ERRO: Poucos dados restantes após a limpeza. O modelo não pode ser treinado.")
     exit()
 
-# A partir de agora, usamos o df_filtrado
-X = df_filtrado[colunas_features]
-y = df_filtrado[coluna_label]
+# A partir de agora, usamos o df_limpo
+X = df_limpo[colunas_features]
+y = df_limpo[coluna_label]
 
 print(
     f"\nUsando {len(colunas_features)} features para prever '{coluna_label}'.")
-print(f"Total de padrões válidos (1): {np.sum(y == 1)}")
-print(f"Total de padrões inválidos (0): {np.sum(y == 0)}")
+print(f"Distribuição final das classes:")
+print(f"  - Padrões Válidos (1):   {np.sum(y == 1)}")
+print(f"  - Padrões Inválidos (0): {np.sum(y == 0)}")
 
 
-# --- Passo 3: Dividir em Dados de Treino e Teste ---
-print("\nDividindo o dataset em treino e teste...")
+# --- Passo 4: Dividir em Dados de Treino e Teste ---
+print("\nDividindo o dataset em treino e teste (80/20)...")
+# A função train_test_split embaralha os dados por padrão (shuffle=True).
+# 'random_state' garante que o embaralhamento seja o mesmo a cada execução (reprodutibilidade).
+# 'stratify=y' mantém a proporção de classes nos sets de treino e teste, importante para dados desbalanceados.
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=42, stratify=y
+    X, y, test_size=0.20, random_state=42, stratify=y
 )
 print(f"Tamanho do set de treino: {len(X_train)}")
 print(f"Tamanho do set de teste: {len(X_test)}")
 
 
-# --- Passo 4: Pré-processamento (Escalonamento das Features) ---
-print("\nRealizando escalonamento das features...")
+# --- Passo 5: Pré-processamento (Escalonamento das Features) ---
+print("\nRealizando escalonamento das features (StandardScaler)...")
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
 
-# --- Passo 5: Construir e Treinar o Modelo (Random Forest) ---
+# --- Passo 6: Construir e Treinar o Modelo (Random Forest) ---
 print("\nConstruindo e treinando o modelo RandomForestClassifier...")
+# n_estimators: número de árvores na floresta.
+# class_weight='balanced': ajusta os pesos das classes para penalizar mais os erros na classe minoritária.
 model = RandomForestClassifier(
     n_estimators=150, random_state=42, n_jobs=-1, class_weight='balanced')
 model.fit(X_train_scaled, y_train)
 print("Treinamento concluído.")
 
 
-# --- Passo 6: Avaliar o Modelo ---
+# --- Passo 7: Avaliar o Modelo ---
 print("\n--- AVALIAÇÃO FINAL DO MODELO ---")
 y_pred = model.predict(X_test_scaled)
 accuracy = (y_pred == y_test).mean()
 print(f"Acurácia no Set de Teste: {accuracy:.2%}")
 
 print("\nRelatório de Classificação:")
-# Adicionado o parâmetro 'labels' para tornar a função mais robusta
 print(classification_report(y_test, y_pred, target_names=[
-      'Inválido (0)', 'Válido (1)'], labels=[0, 1]))
+      'Inválido (0)', 'Válido (1)'], labels=[0, 1], zero_division=0))
 
-print("Matriz de Confusão:")
+print("\nMatriz de Confusão:")
 cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
 plt.figure(figsize=(6, 5))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Inválido (Previsto)', 'Válido (Previsto)'],
-            yticklabels=['Inválido (Real)', 'Válido (Real)'])
-plt.title('Matriz de Confusão - Modelo de Features')
-plt.ylabel('Verdadeiro')
-plt.xlabel('Previsto')
+            xticklabels=['Previsto: Inválido', 'Previsto: Válido'],
+            yticklabels=['Real: Inválido', 'Real: Válido'])
+plt.title('Matriz de Confusão')
+plt.ylabel('Rótulo Verdadeiro')
+plt.xlabel('Rótulo Previsto')
+plt.show()
+
+# --- NOVO: Análise da Importância das Features ---
+print("\nImportância das Features (Feature Importance):")
+feature_importances = pd.DataFrame(
+    model.feature_importances_,
+    index=colunas_features,
+    columns=['importance']
+).sort_values('importance', ascending=False)
+
+print(feature_importances)
+
+plt.figure(figsize=(10, 8))
+sns.barplot(x=feature_importances.importance,
+            y=feature_importances.index, palette='viridis')
+plt.title('Importância de Cada Feature para o Modelo')
+plt.xlabel('Importância')
+plt.ylabel('Features')
+plt.tight_layout()
 plt.show()

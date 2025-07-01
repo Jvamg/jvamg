@@ -122,11 +122,14 @@ class LabelingToolHybrid(tk.Tk):
             'intervalo']
         duracao = data_fim - data_inicio
         if intervalo == '1h':
-            buffer = max(pd.Timedelta(hours=16), duracao * 0.5) # Buffer mínimo de 1 dia ou 75% da duração
+            # Buffer mínimo de 1 dia ou 75% da duração
+            buffer = max(pd.Timedelta(hours=16), duracao * 0.5)
         elif intervalo == '4h':
-            buffer = max(pd.Timedelta(days=2), duracao * 0.75) # Buffer mínimo de 2 dias ou 75% da duração
+            # Buffer mínimo de 2 dias ou 75% da duração
+            buffer = max(pd.Timedelta(days=2), duracao * 0.75)
         else:
-            buffer = max(pd.Timedelta(weeks=2), duracao * 0.5) # Corrigido: atribuição do buffer e buffer mínimo de 2 semanas
+            # Corrigido: atribuição do buffer e buffer mínimo de 2 semanas
+            buffer = max(pd.Timedelta(weeks=2), duracao * 0.5)
         data_inicio_contexto, data_fim_contexto = data_inicio - buffer, data_fim + buffer
 
         print(

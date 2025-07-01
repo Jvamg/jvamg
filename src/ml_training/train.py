@@ -12,7 +12,7 @@ from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam
 
 # --- PARÂMETROS GERAIS ---
-ARQUIVO_ETIQUETAS_REAIS = 'dataset_verificado.csv'
+ARQUIVO_ETIQUETAS_REAIS = 'data/datasets/enriched/dataset_final_ml.csv'
 TAMANHO_JANELA_FIXO = 100
 NUM_CLASSES = 5  # OCO/OCOI, Topo Duplo, Sem Padrão, Bandeira de Alta, Bandeira de Baixa
 mapa_etiquetas_str_para_int = {
@@ -62,6 +62,7 @@ def gerar_bear_flag(pontos=100):
     mastro = np.linspace(2.0, 1.0, pontos//2)
     bandeira = np.linspace(1.0, 1.2, pontos//2)
     return np.concatenate([mastro, bandeira]) + np.random.normal(0, 0.05, pontos)
+
 
 def normalize_window(window_data):
     """Normaliza uma janela de dados para o intervalo [0, 1] (Min-Max scaling)."""
