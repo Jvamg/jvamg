@@ -27,7 +27,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # --- Configuração (pode ser importada por outros scripts) ---
 TIMEFRAMES = ['1h', '4h', '1d', '1wk']
 LIMIAR_CONFIANCA = 0.01
-MODELO_PATH = 'data/models/modelo_qualidade_pattens.joblib'
+MODELO_PATH = 'data\models\modelo_qualidade_pattens.joblib'
 PERIODO_DOWNLOAD_MAP = {
     '1h': '15d', '4h': '1mo',
     '1d': '400d', '1wk': '400wk'
