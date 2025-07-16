@@ -1,9 +1,0 @@
-features:
-distancia de um ombro pra cabeça pro outro
-relaçao da altura
-ruido
-extensao do ombro
-diferenca dos ombros como ponto de referencia a altura da cabeca
-angulação da neckline
-altura neckline com ultimo e primeiro vale
-altura do ombro pro vale em comparacao ao outro

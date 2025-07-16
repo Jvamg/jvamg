@@ -1,0 +1,1249 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © theUltimator5
+
+//@version=6
+indicator("Pattern Detector [theUltimator5]", overlay=true, max_bars_back=5000)
+
+// ==================== INPUT PARAMETERS ====================
+bullish_color = input.color(color.lime, 
+     title="Bullish Color", 
+     tooltip="Color used for bullish signals and patterns. Default: Lime")
+
+bearish_color = input.color(color.fuchsia, 
+     title="Bearish Color", 
+     tooltip="Color used for bearish signals and patterns. Default: Fuchsia")
+
+show_zigzag_only = input.bool(false, 
+     title="Show ZigZag Lines Only", 
+     tooltip="When enabled, displays only the ZigZag lines without any pattern detection. Useful for analyzing price structure and swing points. Automatically disables all pattern detection to focus on pure price action")
+
+zigzag_length = input.int(9, 
+     title="ZigZag Sensitivity", 
+     minval=5, maxval=50, 
+     tooltip="Controls how sensitive the ZigZag is to price movements. Lower values (5-10) detect more patterns but may include noise. Higher values (15-30) detect fewer, more significant patterns. Default: 9")
+
+show_pattern_names = input.bool(true, 
+     title="Show Pattern Names", 
+     tooltip="Display the name of each detected pattern (e.g., 'Butterfly (Bullish)', 'Head and Shoulders') directly on the chart for easy identification")
+
+show_point_labels = input.bool(true, 
+     title="Show Point Labels", 
+     tooltip="Display letters (X, A, B, C, D) or abbreviations (LS, H, RS) at key pattern points to help identify the pattern structure")
+
+show_harmonic_patterns = input.bool(true, 
+     title="Detect Harmonic Patterns", 
+     tooltip="Enable detection of harmonic patterns like Butterfly, Gartley, Bat, and Crab. These are advanced Fibonacci-based patterns that often provide high-probability reversal signals")
+
+show_head_shoulders = input.bool(true, 
+     title="Detect Head & Shoulders", 
+     tooltip="Enable detection of Head and Shoulders patterns (both normal and inverse). These are classic reversal patterns that signal potential trend changes")
+
+show_double_patterns = input.bool(true, 
+     title="Detect Double Tops/Bottoms", 
+     tooltip="Enable detection of Double Top and Double Bottom patterns. These are reversal patterns where price tests the same level twice before reversing")
+
+show_wedge_patterns = input.bool(true, 
+     title="Detect Wedge Patterns", 
+     tooltip="Enable detection of Rising and Falling Wedges. These are continuation/reversal patterns with converging trend lines. Requires volume confirmation for accuracy")
+
+zigzag_level = input.int(1, 
+     title="ZigZag Depth Multiplier", 
+     minval=1, maxval=5, 
+     tooltip="Multiplies the ZigZag sensitivity for deeper analysis. Level 1 = most responsive, Level 5 = only major swings. Higher levels reduce noise but may miss shorter-term patterns")
+
+project_point_d = input.bool(false, 
+     title="Project Harmonic Targets", 
+     tooltip="When enabled, projects the ideal 'D' point for incomplete harmonic patterns, helping you anticipate where the pattern might complete. Useful for entry planning")
+
+min_pivot_distance = input.int(2, 
+     title="Minimum Pivot Distance", 
+     minval=1, maxval=10, 
+     tooltip="Minimum number of bars required between consecutive pivots. Higher values reduce noise but may miss some patterns. Default: 2")
+
+// ==================== DERIVED SETTINGS ====================
+// Override pattern detection if ZigZag-only mode is enabled
+effective_show_harmonic = show_harmonic_patterns and not show_zigzag_only
+effective_show_head_shoulders = show_head_shoulders and not show_zigzag_only  
+effective_show_double = show_double_patterns and not show_zigzag_only
+effective_show_wedge = show_wedge_patterns and not show_zigzag_only
+effective_show_names = show_pattern_names and not show_zigzag_only
+effective_show_labels = show_point_labels and not show_zigzag_only
+
+// ==================== GLOBAL CONSTANTS ====================
+HARMONIC_TOLERANCE = 10                                 // Tolerance percentage for harmonic pattern ratios
+VOLUME_MA_LENGTH = 10                                   // Moving average length for volume analysis.  Hard coded to reduce input clutter
+
+// ==================== PERSISTENT STATE VARIABLES ====================
+// Track processing state
+// === State tracking for ZigZag recalculation ===
+var int last_zigzag_length = na                         // Stores the last used ZigZag length to detect input changes
+var int last_processed_harmonic_bar = na                // Tracks the last bar processed for harmonic patterns
+var int last_processed_hs_bar = na                      // Tracks the last bar processed for head & shoulders patterns
+var int last_processed_double_bar = na                  // Tracks the last bar processed for double top/bottom patterns
+var int last_zigzag_length_hs = na                      // Stores ZigZag length at last head & shoulders detection
+var int last_zigzag_length_double = na                  // Stores ZigZag length at last double pattern detection
+var int last_processed_wedge_bar = na                   // Tracks the last bar processed for wedge pattern detection
+var int last_zigzag_length_wedge = na                   // Stores ZigZag length at last wedge pattern detection
+
+// === Drawing element containers ===
+var line[] harmonic_lines = array.new_line()            // Stores lines drawn for harmonic patterns
+var label[] harmonic_labels = array.new_label()         // Stores labels drawn for harmonic pattern points
+var line[] head_shoulder_lines = array.new_line()       // Stores lines for head and shoulders structures
+var label[] head_shoulder_labels = array.new_label()    // Stores labels for head and shoulders points
+var line[] wedge_lines = array.new_line()               // Stores lines drawn for wedge patterns
+var label[] wedge_labels = array.new_label()            // Stores labels for wedge pattern names
+var linefill[] pattern_fills = array.new_linefill()     // Stores fill regions for harmonic patterns
+
+// === ZigZag structure ===
+var float[] pivot_values = array.new_float()            // Holds the Y-values of confirmed ZigZag pivots
+var int[] pivot_bars = array.new_int()                  // Holds the X-values (bar indices) of pivots
+
+// === Pattern overlap and edge-case tracking ===
+var bool force_pivot_refresh = false                    // Flag to force recalculation of ZigZag on parameter changes
+var int extreme_bar = na                                // Bar index of extreme value for harmonic D-point
+var float extreme_value = na                            // Price value of the extreme D-point
+var int extreme_bar_hs = na                             // Bar index of extreme point for head & shoulders
+var float extreme_value_hs = na                         // Price of extreme point for head & shoulders
+var int[] used_harmonic_bars = array.new_int()          // Stores bar indices used by resolved harmonic patterns
+var int[] used_wedge_bars = array.new_int()             // Stores bar indices used by resolved wedge patterns
+bool has_overlapping_pattern = false                    // Flag indicating if a pattern overlaps an existing one
+var int last_pivot_bar = na                             // Index of the most recent confirmed ZigZag pivot (for spacing constraint)
+
+// === Alert-related tracking ===
+var bool new_extreme_d_pattern_detected = false         // Flag to trigger alert when any pattern resolves using the extreme D-point
+var string detected_pattern_text = ""                   // Stores the name and direction (bullish/bearish) of the last detected pattern
+detected_pattern_text := ""                             // Reset pattern text each bar
+new_extreme_d_pattern_detected := false                 // Reset pattern alert flag each bar
+
+// ==================== UTILITY FUNCTIONS ====================
+
+// Calculate angle between two points
+calculate_angle(y1, y2, x_delta) =>                     // Function to calculate the angle (in degrees) between two Y-values across a horizontal X distance
+    rad_to_deg = 180 / math.pi                          // Constant to convert radians to degrees
+    dx = x_delta                                        // Horizontal distance between the two points
+    dy = y2 - y1                                        // Vertical distance (rise) between the two Y-values
+    dx != 0 ? rad_to_deg * math.atan(dy / dx)           // If the horizontal distance is not zero, calculate the angle using arctangent and convert to degrees
+              : na                                      // If horizontal distance is zero, return 'na' to avoid division by zero
+
+// Clear all pattern drawings
+//This function is to remove old patterns that are stored and lines that were created.
+//When any input is updated, or old patterns are no longer needed, we have to get rid of clutter
+//in the chart to avoid hitting the hard limits on lines, labels, etc...
+//This function allows the indicator to refresh properly since there is a strict limit on memory and usage.
+clear_all_patterns() =>
+    // Clear harmonic patterns
+    for line_obj in harmonic_lines
+        line.delete(line_obj)
+    for label_obj in harmonic_labels
+        label.delete(label_obj)
+    for fill_obj in pattern_fills
+        linefill.delete(fill_obj)
+    
+    // Clear head and shoulders patterns
+    for line_obj in head_shoulder_lines
+        line.delete(line_obj)
+    for label_obj in head_shoulder_labels
+        label.delete(label_obj)
+    
+    // Clear wedge patterns
+    for line_obj in wedge_lines
+        line.delete(line_obj)
+    for label_obj in wedge_labels
+        label.delete(label_obj)
+    
+    // Clear all arrays
+    array.clear(harmonic_lines)
+    array.clear(harmonic_labels)
+    array.clear(pattern_fills)
+    array.clear(head_shoulder_lines)
+    array.clear(head_shoulder_labels)
+    array.clear(wedge_lines)
+    array.clear(wedge_labels)
+    array.clear(used_wedge_bars)
+
+
+
+// Check if volume is decreasing over pattern duration (for wedge confirmation)
+//Part of the wedge pattern validation is that volume is decreasing over the duration of the wedge.
+//If volume is not reducing, then it will not be a valid wedge per this indicator.
+//This function is called in the wedge logic block.
+// Function to check if volume is decreasing over the pattern duration, used for wedge confirmation
+
+is_volume_decreasing(start_bar, end_bar, volume_ma_length = 10) =>
+    pattern_duration = end_bar - start_bar                          // Calculate the number of bars in the pattern duration
+    
+    if pattern_duration < volume_ma_length * 2                      // Check if there are enough bars for reliable volume analysis (at least twice the MA length)
+        false                                                       // Return false if insufficient bars for analysis
+    else
+        start_volume_ma = 0.0                                       // Initialize variable to store the moving average of volume at the pattern's start
+        start_offset = bar_index - start_bar                        // Calculate the offset from the current bar to the start bar
+        
+        if start_offset >= 0 and start_offset < 5000                // Ensure the start offset is within valid historical data limits
+            for i = 0 to volume_ma_length - 1                       // Loop over the number of bars defined by volume_ma_length
+                start_volume_ma := start_volume_ma + volume[start_offset + i]       // Sum the volume for the specified bars starting at start_offset
+            start_volume_ma := start_volume_ma / volume_ma_length   // Divide by volume_ma_length to compute the average volume at the start
+        else
+            start_volume_ma := na                                   // Set to 'na' if the start offset is invalid (out of bounds)
+        
+        // Calculate current volume MA
+        end_volume_ma = 0.0                                         // Initialize variable to store the moving average of volume at the pattern's end
+        for i = 0 to volume_ma_length - 1                           // Loop over the number of bars defined by volume_ma_length
+            end_volume_ma := end_volume_ma + volume[i]              // Sum the volume for the most recent bars
+        end_volume_ma := end_volume_ma / volume_ma_length           // Divide by volume_ma_length to compute the average volume at the end
+        
+        // Check for decreasing trend
+        volume_decreasing = not na(start_volume_ma) and not na(end_volume_ma) and end_volume_ma < start_volume_ma  // Check if both MAs are valid and the end MA is less than the start MA, indicating a decreasing trend
+        
+        // Additional consistency check
+        consistent_decrease = true                                  // Initialize flag to assume volume consistently decreases
+        check_points = 3                                            // Define the number of intermediate points to check for volume trend consistency.
+        
+        if pattern_duration >= check_points * volume_ma_length      // Ensure enough bars to check intermediate points (at least 3 times the MA length)
+            volume_points = array.new<float>()                      // Create an array to store volume moving averages at intermediate points
+            
+            for j = 0 to check_points - 1                           // Loop to calculate volume MAs at 3 evenly spaced points in the pattern
+                sample_bar = math.round(start_bar + (pattern_duration * j / (check_points - 1)))    // Calculate the bar index for the current intermediate point
+                sample_offset = bar_index - sample_bar              // Calculate the offset from the current bar to the sample bar
+                
+                if sample_offset >= 0 and sample_offset < 5000      // Ensure the sample offset is within valid historical data limits
+                    sample_volume_ma = 0.0                          // Initialize variable to store the moving average at the sample point
+                    for k = 0 to volume_ma_length - 1               // Loop over the number of bars defined by volume_ma_length
+                        if sample_offset + k < 5000                 // Ensure each volume bar is within historical data limits
+                            sample_volume_ma := sample_volume_ma + volume[sample_offset + k]        // Sum the volume for the specified bars at the sample point
+                    sample_volume_ma := sample_volume_ma / volume_ma_length                         // Divide by volume_ma_length to compute the average volume at the sample point
+                    array.push(volume_points, sample_volume_ma)     // Add the computed volume MA to the array
+            
+            // Verify decreasing trend
+            if array.size(volume_points) >= 2                       // Ensure there are at least 2 points to compare for trend analysis
+                for i = 1 to array.size(volume_points) - 1          // Loop through the volume MA points to check for a decreasing trend
+                    if array.get(volume_points, i) >= array.get(volume_points, i - 1)               // Check if the current volume MA is not less than the previous one
+                        consistent_decrease := false                // Set flag to false if volume does not consistently decrease
+                        break                                       // Exit the loop if a non-decreasing point is found
+        
+        volume_decreasing and consistent_decrease                   // Return true only if the overall trend is decreasing and all intermediate points show a consistent decrease
+
+
+// ==================== IMPROVED ZIGZAG CALCULATION ====================
+
+// Calculate ZigZag pivots with minimum distance enforcement
+zigzag_offset = 0                                                       // Initialize zigzag_offset to track trend direction (0 for high, 1 for low)
+source_high = high                                                      // Set source_high to the current bar's high price for pivot calculations
+source_low = low                                                        // Set source_low to the current bar's low price for pivot calculations
+highest_value = ta.highest(source_high, zigzag_length * zigzag_level)   // Find the highest high in the lookback period defined by zigzag_length * zigzag_level
+lowest_value = ta.lowest(source_low, zigzag_length * zigzag_level)      // Find the lowest low in the lookback period defined by zigzag_length * zigzag_level
+
+// Determine current trend direction
+zigzag_offset := source_high[zigzag_length * zigzag_level] >= highest_value ? 0 : 
+                 source_low[zigzag_length * zigzag_level] <= lowest_value ? 1 : zigzag_offset[1]    // Set zigzag_offset to 0 if the high from lookback bars ago is the highest, 1 if the low is the lowest, else retain previous offset
+
+// Identify potential pivot points
+potential_pivot_low = zigzag_offset == 1 and zigzag_offset[1] != 1                                  // Flag a potential low pivot if zigzag_offset indicates a low (1) and the previous offset was not a low
+potential_pivot_high = zigzag_offset == 0 and zigzag_offset[1] != 0                                 // Flag a potential high pivot if zigzag_offset indicates a high (0) and the previous offset was not a high
+
+// Calculate the bar index where the pivot would occur
+potential_pivot_bar = bar_index - zigzag_length * zigzag_level                                      // Calculate the bar index of the potential pivot by offsetting the current bar_index by the lookback period
+
+// Check minimum distance from last pivot
+bool is_pivot_low = false                                               // Initialize flag to indicate no confirmed low pivot
+bool is_pivot_high = false                                              // Initialize flag to indicate no confirmed high pivot
+
+if potential_pivot_low or potential_pivot_high                          // Check if there’s a potential low or high pivot
+    // Check if enough bars have passed since the last pivot
+    bool sufficient_distance = na(last_pivot_bar) or (potential_pivot_bar - last_pivot_bar) >= min_pivot_distance  // Confirm if the potential pivot is either the first pivot (na) or meets the minimum bar distance from the last pivot
+    
+    if sufficient_distance                                              // If the minimum distance requirement is satisfied
+        is_pivot_low := potential_pivot_low                             // Confirm the potential low pivot as a valid low pivot
+        is_pivot_high := potential_pivot_high                           // Confirm the potential high pivot as a valid high pivot
+        // Update last pivot bar only when we confirm a new pivot
+        last_pivot_bar := potential_pivot_bar                           // Update the last pivot bar index to the current confirmed pivot bar
+
+// Store pivot data only for confirmed pivots
+float current_pivot_value = na                                          // Initialize variable to store the price value of the confirmed pivot (na by default)
+int current_pivot_bar = na                                              // Initialize variable to store the bar index of the confirmed pivot (na by default)
+
+if is_pivot_high                                                        // If a high pivot is confirmed
+    current_pivot_value := high[zigzag_length * zigzag_level]           // Set the pivot value to the high price from the lookback period
+    current_pivot_bar := potential_pivot_bar                            // Set the pivot bar to the calculated potential pivot bar
+else if is_pivot_low                                                    // If a low pivot is confirmed
+    current_pivot_value := low[zigzag_length * zigzag_level]            // Set the pivot value to the low price from the lookback period
+    current_pivot_bar := potential_pivot_bar                            // Set the pivot bar to the calculated potential pivot bar
+
+// Add valid pivots to arrays with alternation validation
+if not na(current_pivot_value) and not na(current_pivot_bar)                            // If a valid pivot value and bar index are confirmed
+    // Validate alternating pivot direction
+    bool should_add_pivot = true                                                        // Initialize flag to assume the pivot should be added to arrays
+    
+    if array.size(pivot_values) > 0                                                     // If there’s at least one existing pivot in the pivot_values array
+        // Get the last pivot value to check direction
+        last_pivot_value = array.get(pivot_values, array.size(pivot_values) - 1)        // Retrieve the most recent pivot value from the array
+        
+        // Determine if current pivot should be opposite direction from last
+        last_was_high = array.size(pivot_values) >= 2 ? 
+                       array.get(pivot_values, array.size(pivot_values) - 1) > array.get(pivot_values, array.size(pivot_values) - 2) :
+                       true                                                             // Check if the last pivot was a high (compare last two pivots if available, else assume true for the first comparison)
+        
+        current_is_high = is_pivot_high                                                 // Flag whether the current pivot is a high pivot
+        
+        // For proper ZigZag alternation:
+        // If last was high, current should be low
+        // If last was low, current should be high
+        if array.size(pivot_values) >= 1                                                // If there’s at least one prior pivot
+            // Simple check: current pivot value should be different direction from last
+            if (is_pivot_high and current_pivot_value <= last_pivot_value) or
+               (is_pivot_low and current_pivot_value >= last_pivot_value)               // Check if the current pivot violates alternation (e.g., high pivot not higher than last pivot)
+                should_add_pivot := false                                               // Prevent adding the pivot if it doesn’t alternate correctly
+                
+        // Additional check: ensure we don't have two consecutive highs or lows
+        if should_add_pivot and array.size(pivot_values) >= 2                           // If the pivot is still valid and there are at least two prior pivots
+            second_last_pivot = array.get(pivot_values, array.size(pivot_values) - 2)   // Retrieve the second-to-last pivot value
+            
+            // Check pattern: second_last -> last -> current
+            last_direction_up = last_pivot_value > second_last_pivot                    // Determine if the last pivot was higher than the second-to-last (upward move)
+            current_direction_up = current_pivot_value > last_pivot_value               // Determine if the current pivot is higher than the last pivot (upward move)
+            
+            // Directions should alternate (up-down-up or down-up-down)
+            if last_direction_up == current_direction_up                                // Check if the direction doesn’t alternate (e.g., two consecutive upward or downward moves)
+                should_add_pivot := false                                               // Prevent adding the pivot if it violates the alternation rule
+    
+    // Only add pivot if it maintains proper alternation
+    if should_add_pivot                                                                 // If the pivot passes all alternation checks
+        array.push(pivot_values, current_pivot_value)                                   // Add the confirmed pivot value to the pivot_values array
+        array.push(pivot_bars, current_pivot_bar)                                       // Add the confirmed pivot bar index to the pivot_bars array
+        
+        // Limit array size for performance
+        if array.size(pivot_values) > 100                                               // If the pivot_values array exceeds 100 elements
+            array.shift(pivot_values)                                                   // Remove the oldest pivot value to keep the array size manageable
+            array.shift(pivot_bars)                                                     // Remove the corresponding oldest pivot bar index
+        last_processed_harmonic_bar := na                                               // Reset the last processed harmonic bar to force harmonic pattern recalculation
+
+// ==================== ZIGZAG LINE DRAWING ====================
+
+// Initialize arrays and flags for ZigZag drawing
+var line[] zigzag_lines = array.new_line()                          // Create an array to store ZigZag lines drawn on the chart
+var bool show_high_pivot = false                                    // Initialize flag to control display of high pivot markers (used for real-time feedback)
+var bool show_low_pivot = false                                     // Initialize flag to control display of low pivot markers (used for real-time feedback)
+
+if show_zigzag_only                                                 // Check if ZigZag-only mode is enabled to display only ZigZag lines without patterns
+    clear_all_patterns()                                            // Remove all pattern-related drawings (harmonic, head and shoulders, wedges) to show only ZigZag lines
+    
+    // Draw lagging ZigZag - only draw line when next pivot is confirmed
+    if not na(current_pivot_value) and not na(current_pivot_bar) and array.size(pivot_values) >= 2  // Ensure a valid pivot is confirmed and at least two pivots exist for drawing a line
+        // Get the last two pivot points
+        current_idx = array.size(pivot_values) - 1                  // Get the index of the most recent pivot in the pivot_values array
+        previous_idx = current_idx - 1                              // Get the index of the second-to-last pivot
+        
+        // Current pivot (just confirmed)
+        current_bar = array.get(pivot_bars, current_idx)            // Retrieve the bar index of the most recent pivot
+        current_val = array.get(pivot_values, current_idx)          // Retrieve the price value of the most recent pivot
+        
+        // Previous pivot
+        previous_bar = array.get(pivot_bars, previous_idx)          // Retrieve the bar index of the second-to-last pivot
+        previous_val = array.get(pivot_values, previous_idx)        // Retrieve the price value of the second-to-last pivot
+        
+        // Draw diagonal line between previous and current pivot
+        zigzag_line = line.new(
+             x1=previous_bar, y1=previous_val,                      // Set the start point of the line at the previous pivot’s bar and price
+             x2=current_bar, y2=current_val,                        // Set the end point of the line at the current pivot’s bar and price
+             color=color.blue, width=2, style=line.style_solid    // Draw a solid blue line with width 2
+         )
+        
+        // Add line to ZigZag array
+        array.push(zigzag_lines, zigzag_line)                       // Append the newly drawn ZigZag line to the zigzag_lines array
+        
+        // Limit number of ZigZag lines. Preset at 100. I didn't want to make this a user input so it is hard coded.
+        // Probably doesn't even need to exist. I just have it to not blow out all other charting.
+        max_zigzag_lines = 100
+        while array.size(zigzag_lines) > max_zigzag_lines           // Check if the number of lines exceeds the limit.  Need to keep only the most recent lines.
+            old_line = array.shift(zigzag_lines)                    // Remove the oldest line from the zigzag_lines array
+            line.delete(old_line)                                   // Delete the oldest line from the chart.
+
+
+else                                                                // If ZigZag-only mode is disabled (pattern detection is active)
+    // When not in ZigZag mode, clear ZigZag lines
+    for line_obj in zigzag_lines                                    // Iterate through all lines in the zigzag_lines array
+        line.delete(line_obj)                                       // Delete each ZigZag line from the chart
+    array.clear(zigzag_lines)                                       // Clear the zigzag_lines array to remove all stored line references
+
+
+// Set pivot markers for the most recent pivot (for real-time feedback)
+if show_zigzag_only and not na(current_pivot_value) and effective_show_labels   // Check if ZigZag-only mode is enabled, a valid pivot exists, and labels are enabled
+    show_high_pivot := is_pivot_high                                            // Set show_high_pivot to true if the current pivot is a high pivot, enabling a marker for it
+    show_low_pivot := is_pivot_low                                              // Set show_low_pivot to true if the current pivot is a low pivot, enabling a marker for it
+else
+    show_high_pivot := false                                                    // Disable high pivot marker if conditions are not met (e.g., not in ZigZag-only mode or no valid pivot)
+    show_low_pivot := false                                                     // Disable low pivot marker if conditions are not met (e.g., not in ZigZag-only mode or no valid pivot)
+
+// ==================== HARMONIC PATTERN DETECTION ====================
+
+// Start harmonic pattern detection if conditions are met
+if array.size(pivot_values) >= 3 and effective_show_harmonic                                            // Check if there are at least 3 pivots and harmonic pattern detection is enabled
+    current_harmonic_bar = array.get(pivot_bars, array.size(pivot_bars) - 1)                            // Get the bar index of the most recent pivot for harmonic pattern analysis
+    length_changed = na(last_zigzag_length) or last_zigzag_length != zigzag_length * zigzag_level       // Check if ZigZag parameters have changed or are undefined
+    should_redraw = length_changed or bar_index == last_bar_index or na(last_processed_harmonic_bar)    // Determine if patterns need redrawing due to parameter change, last bar, or unprocessed harmonic bar
+
+    if na(last_processed_harmonic_bar) or current_harmonic_bar != last_processed_harmonic_bar or should_redraw  // Check if harmonic patterns need processing (first run, new pivot, or redraw required)
+        last_processed_harmonic_bar := current_harmonic_bar                                             // Update the last processed harmonic bar to the current pivot bar
+        last_zigzag_length := zigzag_length * zigzag_level                                              // Update the stored ZigZag length to the current setting
+
+        // === FIND EXTREME VALUES FOR POINT D PROJECTION ===
+        bool use_extreme_value = false                                                                  // Initialize flag to indicate whether an extreme value for point D projection is found
+        float extreme_value = na                                                                        // Initialize variable to store the extreme price value (na by default)
+        int extreme_bar = na                                                                            // Initialize variable to store the bar index of the extreme value (na by default)
+
+        if array.size(pivot_values) >= 2                                                                // Check if there are at least 2 pivots to analyze for extreme values
+            int last_index = array.size(pivot_values) - 1                                               // Get the index of the most recent pivot
+            int prev_index = last_index - 1                                                             // Get the index of the second-to-last pivot
+
+            int last_bar_value = array.get(pivot_bars, last_index)                                      // Retrieve the bar index of the most recent pivot
+            float last_pivot_value = array.get(pivot_values, last_index)                                // Retrieve the price value of the most recent pivot
+            float prev_pivot_value = array.get(pivot_values, prev_index)                                // Retrieve the price value of the second-to-last pivot
+
+            bool is_upward_pivot = last_pivot_value > prev_pivot_value                                  // Determine if the most recent pivot is a high (upward move) compared to the previous pivot
+
+            extreme_value := last_pivot_value                                                           // Initialize extreme value to the most recent pivot’s price
+            extreme_bar := last_bar_value                                                               // Initialize extreme bar to the most recent pivot’s bar index
+            int bars_to_check = bar_index - last_bar_value                                              // Calculate the number of bars since the last pivot to search for extremes
+
+            // Find extreme point since last pivot
+            for i = 0 to bars_to_check                                                                  // Loop through bars from the last pivot to the current bar
+                float candidate_value = is_upward_pivot ? low[i] : high[i]                              // Select the low price if the last pivot was a high, or high price if it was a low
+                if (is_upward_pivot and candidate_value < extreme_value) or 
+                   (not is_upward_pivot and candidate_value > extreme_value)                            // Check if the candidate value is a new extreme (lower for highs, higher for lows)
+                    extreme_value := candidate_value                                                    // Update extreme_value to the new extreme price found
+                    extreme_bar := bar_index - i                                                        // Update extreme_bar to the bar index of the new extreme price
+
+            use_extreme_value := true                                                                   // Set flag to indicate a valid extreme value was found for point D projection
+
+        // === DEFINE HARMONIC PATTERN POINTS (X, A, B, C, D) ===
+        float point_x = na
+        float point_a = na
+        float point_b = na
+        float point_c = na
+        float point_d = na
+        int bar_x = na
+        int bar_a = na
+        int bar_b = na
+        int bar_c = na
+        int bar_d = na
+
+        // Complete 5-point pattern
+        if array.size(pivot_values) >= 5
+            int i = array.size(pivot_values) - 5
+            point_x := array.get(pivot_values, i)
+            point_a := array.get(pivot_values, i + 1)
+            point_b := array.get(pivot_values, i + 2)
+            point_c := array.get(pivot_values, i + 3)
+            point_d := array.get(pivot_values, i + 4)
+            bar_x := array.get(pivot_bars, i)
+            bar_a := array.get(pivot_bars, i + 1)
+            bar_b := array.get(pivot_bars, i + 2)
+            bar_c := array.get(pivot_bars, i + 3)
+            bar_d := array.get(pivot_bars, i + 4)
+
+        // 4-point pattern with extreme value for D
+        else if array.size(pivot_values) == 4 and use_extreme_value
+            int i = array.size(pivot_values) - 4
+            point_x := array.get(pivot_values, i)
+            point_a := array.get(pivot_values, i + 1)
+            point_b := array.get(pivot_values, i + 2)
+            point_c := array.get(pivot_values, i + 3)
+            point_d := extreme_value
+            bar_x := array.get(pivot_bars, i)
+            bar_a := array.get(pivot_bars, i + 1)
+            bar_b := array.get(pivot_bars, i + 2)
+            bar_c := array.get(pivot_bars, i + 3)
+            bar_d := extreme_bar
+
+        // 3-point pattern with projection
+        else if array.size(pivot_values) == 3 and use_extreme_value and project_point_d
+            int i = array.size(pivot_values) - 3
+            point_x := array.get(pivot_values, i)
+            point_a := array.get(pivot_values, i + 1)
+            point_b := array.get(pivot_values, i + 2)
+            point_c := extreme_value
+            bar_x := array.get(pivot_bars, i)
+            bar_a := array.get(pivot_bars, i + 1)
+            bar_b := array.get(pivot_bars, i + 2)
+            bar_c := extreme_bar
+
+        // Calculate pattern ratios
+        float move_xa = point_a - point_x       // Calculate the price movement from point X to point A (XA leg of the pattern)
+        float move_ab = point_b - point_a       // Calculate the price movement from point A to point B (AB leg of the pattern)
+        float move_bc = point_c - point_b       // Calculate the price movement from point B to point C (BC leg of the pattern)
+        float move_cd = point_d - point_c       // Calculate the price movement from point C to point D (CD leg of the pattern)
+        float move_da = point_a - point_d       // Calculate the price movement from point D to point A (DA leg for XD ratio)
+        float move_ax = point_x - point_a       // Calculate the price movement from point A to point X (AX leg, reverse of XA for ratio calculation)
+
+        // Determine pattern direction
+        bool is_bearish_pattern = point_x > point_a and point_b > point_a and point_c < point_b     // Identify a bearish pattern if X > A, B > A, and C < B (indicating a downward reversal)
+        bool is_bullish_pattern = point_x < point_a and point_b < point_a and point_c > point_b     // Identify a bullish pattern if X < A, B < A, and C > B (indicating an upward reversal)
+
+        // Calculate Fibonacci ratios
+        float ratio_ab_xa = math.abs(move_ab / move_xa)                     // Calculate the Fibonacci ratio of AB leg relative to XA leg (absolute value to handle direction)
+        float ratio_bc_ab = math.abs(move_bc / move_ab)                     // Calculate the Fibonacci ratio of BC leg relative to AB leg (absolute value to handle direction)
+        float ratio_cd_bc = math.abs(move_cd / move_bc)                     // Calculate the Fibonacci ratio of CD leg relative to BC leg (absolute value to handle direction)
+        float ratio_xd_xa = math.abs(move_da) / math.abs(move_ax)           // Calculate the Fibonacci ratio of XD leg (D to A) relative to XA leg (X to A)
+
+        // === PATTERN VALIDATION ===
+        float tolerance_factor = (100 - HARMONIC_TOLERANCE) / 100           // Calculate lower tolerance factor for ratio validation (e.g., 90% if tolerance is 10%)
+        float tolerance_factor_high = (100 + HARMONIC_TOLERANCE) / 100      // Calculate upper tolerance factor for ratio validation (e.g., 110% if tolerance is 10%)
+
+        // Butterfly pattern ratios
+        valid_butterfly_ab = ratio_ab_xa >= 0.786 * tolerance_factor and ratio_ab_xa <= 0.786 * tolerance_factor_high   // Validate AB/XA ratio for Butterfly pattern (must be ~0.786 within tolerance)
+        valid_butterfly_bc = ratio_bc_ab >= 0.382 and ratio_bc_ab <= 0.886                                              // Validate BC/AB ratio for Butterfly pattern (must be between 0.382 and 0.886)
+        valid_butterfly_cd = project_point_d ? true : ratio_cd_bc >= 1.618 and ratio_cd_bc <= 2.24                      // Validate CD/BC ratio for Butterfly (1.618–2.24) or skip if projecting point D
+        valid_butterfly_xd = project_point_d ? true : ratio_xd_xa >= 1.27 and ratio_xd_xa <= 1.618                      // Validate XD/XA ratio for Butterfly (1.27–1.618) or skip if projecting point D
+
+        // Gartley pattern ratios
+        valid_gartley_ab = ratio_ab_xa >= 0.618 * tolerance_factor and ratio_ab_xa <= 0.618 * tolerance_factor_high     // Validate AB/XA ratio for Gartley pattern (must be ~0.618 within tolerance)
+        valid_gartley_bc = valid_butterfly_bc                                                                           // Reuse Butterfly’s BC/AB ratio validation (0.382–0.886) for Gartley
+        valid_gartley_cd = project_point_d ? true : ratio_cd_bc >= 1.272 and ratio_cd_bc <= 1.618                       // Validate CD/BC ratio for Gartley (1.272–1.618) or skip if projecting point D
+        valid_gartley_xd = project_point_d ? true : ratio_xd_xa >= 0.786 * tolerance_factor and ratio_xd_xa <= 0.786 * tolerance_factor_high  // Validate XD/XA ratio for Gartley (~0.786 within tolerance) or skip if projecting point D
+
+        // Bat pattern ratios
+        valid_bat_ab = ratio_ab_xa >= 0.382 and ratio_ab_xa <= 0.50                 // Validate AB/XA ratio for Bat pattern (must be between 0.382 and 0.50)
+        valid_bat_bc = ratio_bc_ab >= 0.382 and ratio_bc_ab <= 0.886                // Validate BC/AB ratio for Bat pattern (same as Butterfly, 0.382–0.886)
+        valid_bat_cd = project_point_d ? true : valid_butterfly_cd                  // Reuse Butterfly’s CD/BC ratio validation (1.618–2.24) or skip if projecting point D
+        valid_bat_xd = project_point_d ? true : ratio_xd_xa >= 0.886 * tolerance_factor and ratio_xd_xa <= 0.886 * tolerance_factor_high      // Validate XD/XA ratio for Bat (~0.886 within tolerance) or skip if projecting point D
+
+        // Crab pattern ratios
+        valid_crab_ab = ratio_ab_xa >= 0.382 and ratio_ab_xa <= 0.618                           // Validate AB/XA ratio for Crab pattern (must be between 0.382 and 0.618)
+        valid_crab_bc = ratio_bc_ab >= 0.382 and ratio_bc_ab <= 0.886                           // Validate BC/AB ratio for Crab pattern (same as Butterfly, 0.382–0.886)
+        valid_crab_cd = project_point_d ? true : ratio_cd_bc >= 2.24 and ratio_cd_bc <= 3.618   // Validate CD/BC ratio for Crab (2.24–3.618) or skip if projecting point D
+        valid_crab_xd = project_point_d ? true : ratio_xd_xa >= 1.618 * tolerance_factor and ratio_xd_xa <= 1.618 * tolerance_factor_high  // Validate XD/XA ratio for Crab (~1.618 within tolerance) or skip if projecting point D
+
+        // Pattern identification
+        is_butterfly = valid_butterfly_ab and valid_butterfly_bc and valid_butterfly_cd and valid_butterfly_xd  // Confirm Butterfly pattern if all its ratio validations pass
+        is_gartley = valid_gartley_ab and valid_gartley_bc and valid_gartley_cd and valid_gartley_xd            // Confirm Gartley pattern if all its ratio validations pass
+        is_bat = valid_bat_ab and valid_bat_bc and valid_bat_cd and valid_bat_xd                                // Confirm Bat pattern if all its ratio validations pass
+        is_crab = valid_crab_ab and valid_crab_bc and valid_crab_cd and valid_crab_xd                           // Confirm Crab pattern if all its ratio validations pass
+
+        // Calculate price targets
+        target_move = math.abs(move_da)                                                     // Calculate the absolute price movement from point D to point A for target projection
+        target_price = is_bullish_pattern ? point_d + target_move : point_d - target_move   // Set target price: add move_da for bullish patterns (upward target) or subtract for bearish (downward target)
+        arrow_length = zigzag_length * zigzag_level                                         // Set the length of the target projection arrow based on ZigZag parameters
+
+        // Check for overlapping patterns
+        pattern_bars_to_check = array.new_int()
+        array.clear(pattern_bars_to_check)
+        array.push(pattern_bars_to_check, bar_x)
+        array.push(pattern_bars_to_check, bar_a)
+        array.push(pattern_bars_to_check, bar_b)
+        array.push(pattern_bars_to_check, bar_c)
+        array.push(pattern_bars_to_check, bar_d)
+        
+        has_overlapping_pattern := false
+
+        for i = 0 to array.size(pattern_bars_to_check) - 1
+            if array.includes(used_harmonic_bars, array.get(pattern_bars_to_check, i))
+                has_overlapping_pattern := true             //If overlap, turn has_overlapping_pattern true
+
+        // === DRAW HARMONIC PATTERN ===
+        if not has_overlapping_pattern and (is_butterfly or is_gartley or is_bat or is_crab)        //Verifies that pattern isn't overlapping and that one harmonic is true
+            if bar_d == extreme_bar     //This statement will plot the most recent pattern if it ends on the most recent pivot point.  This is used for real-time analysis and future projection
+                detected_pattern_text := is_butterfly ? (is_bullish_pattern ? "Butterfly (Bullish)" : "Butterfly (Bearish)") :
+                          is_gartley ? (is_bullish_pattern ? "Gartley (Bullish)" : "Gartley (Bearish)") :
+                          is_bat ? (is_bullish_pattern ? "Bat (Bullish)" : "Bat (Bearish)") :
+                          is_crab ? (is_bullish_pattern ? "Crab (Bullish)" : "Crab (Bearish)") : "Unknown Pattern"
+                new_extreme_d_pattern_detected := true
+            // Project point D if selected by the user input
+            if project_point_d
+                ratio = is_butterfly ? 1.618 : is_gartley ? 0.786 : is_bat ? 2.24 : is_crab ? 1.618 : na    //This is the same ratio used in the existing logic, but it projects instead of confirms
+                if not na(ratio)
+                    cd_length = move_bc * ratio
+                    point_d := is_bullish_pattern ? point_c - cd_length : point_c - cd_length   //Sets vertical position of point_d
+            
+            // Draw pattern lines
+            line_xa = line.new(bar_x, point_x, bar_a, point_a, color=color.blue)
+            line_ab = line.new(bar_a, point_a, bar_b, point_b, color=color.orange)
+            line_bc = line.new(bar_b, point_b, bar_c, point_c, color=color.fuchsia)
+            line_cd = line.new(bar_c, point_c, bar_d, point_d, color=color.teal)
+            line_ac = line.new(bar_x, point_x, bar_b, point_b, color=color.navy)
+            line_bd = line.new(bar_b, point_b, bar_d, point_d, color=color.navy)
+
+            // Add point labels
+            if effective_show_labels
+                label.new(bar_x, point_x, "X", style=is_bearish_pattern ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+                label.new(bar_a, point_a, "A", style=is_bearish_pattern ? label.style_label_up : label.style_label_down, color=color.orange, size=size.tiny)
+                label.new(bar_b, point_b, "B", style=is_bearish_pattern ? label.style_label_down : label.style_label_up, color=color.fuchsia, size=size.tiny)
+                label.new(bar_c, point_c, "C", style=is_bearish_pattern ? label.style_label_up : label.style_label_down, color=color.green, size=size.tiny)
+                label.new(bar_d, point_d, "D", style=is_bearish_pattern ? label.style_label_down : label.style_label_up, color=is_bullish_pattern ? color.lime : color.red, size=size.tiny)
+
+            // Add price target projection
+            if not project_point_d
+                line.new(bar_d, point_d, bar_d + arrow_length, target_price, color=is_bullish_pattern ? bullish_color : bearish_color, width=1, style=line.style_arrow_right)
+
+            // Add pattern name labels
+            if effective_show_names
+                pattern_text = is_butterfly ? (is_bearish_pattern ? "Butterfly (Bearish)" : "Butterfly (Bullish)") :
+                              is_gartley ? (is_bearish_pattern ? "Gartley (Bearish)" : "Gartley (Bullish)") :
+                              is_bat ? (is_bearish_pattern ? "Bat (Bearish)" : "Bat (Bullish)") :
+                              is_crab ? (is_bearish_pattern ? "Crab (Bearish)" : "Crab (Bullish)") : na
+                
+                if not na(pattern_text)
+                    label.new(bar_b, point_b - 1.5 * (point_b - point_a), pattern_text, 
+                             style=label.style_none, textcolor=color.gray, color=color.orange)
+
+            // Add pattern fills
+            fill_color = is_bullish_pattern ? color.new(color.green, 85) : color.new(color.red, 85)
+            pattern_fill1 = linefill.new(line_xa, line_ac, color=fill_color)
+            pattern_fill2 = linefill.new(line_bc, line_bd, color=fill_color)
+
+            // Store pattern elements for cleanup
+            array.push(harmonic_lines, line_xa)
+            array.push(harmonic_lines, line_ab)
+            array.push(harmonic_lines, line_bc)
+            array.push(harmonic_lines, line_cd)
+            array.push(harmonic_lines, line_ac)
+            array.push(harmonic_lines, line_bd)
+            array.push(pattern_fills, pattern_fill1)
+            array.push(pattern_fills, pattern_fill2)
+
+            // Mark bars as used to prevent overlapping patterns
+            for i = 0 to array.size(pattern_bars_to_check) - 1
+                array.push(used_harmonic_bars, array.get(pattern_bars_to_check, i))
+
+// ==================== 6-POINT PATTERN DETECTION (WEDGES & HEAD AND SHOULDERS) ====================
+
+if array.size(pivot_values) >= 6 and (effective_show_wedge or effective_show_head_shoulders)
+    current_6point_bar = array.get(pivot_bars, array.size(pivot_bars) - 1)
+    length_changed_6point = na(last_zigzag_length_hs) or last_zigzag_length != zigzag_length * zigzag_level
+    should_redraw = length_changed_6point or bar_index == last_bar_index or na(last_processed_harmonic_bar)
+
+    if na(last_processed_hs_bar) or current_6point_bar != last_processed_hs_bar or should_redraw
+        last_processed_hs_bar := current_6point_bar
+        last_zigzag_length_hs := zigzag_length * zigzag_level
+
+        // === EXTRACT 6 PIVOT POINTS (SHARED FOR BOTH PATTERNS) ===
+        i = array.size(pivot_values) - 6
+        p0 = array.get(pivot_values, i)
+        p1 = array.get(pivot_values, i + 1)
+        p2 = array.get(pivot_values, i + 2)
+        p3 = array.get(pivot_values, i + 3)
+        p4 = array.get(pivot_values, i + 4)
+        p5 = array.get(pivot_values, i + 5)
+        
+        b0 = array.get(pivot_bars, i)
+        b1 = array.get(pivot_bars, i + 1)
+        b2 = array.get(pivot_bars, i + 2)
+        b3 = array.get(pivot_bars, i + 3)
+        b4 = array.get(pivot_bars, i + 4)
+        b5 = array.get(pivot_bars, i + 5)
+
+        // === WEDGE PATTERN ANALYSIS ===
+        if effective_show_wedge
+            // === EXTENDED WEDGE DETECTION (6+ PIVOTS) ===
+            // Start with minimum 6 pivots but extend if pattern continues
+            max_pivots_to_check = math.min(array.size(pivot_values), 12)  // Reduced limit for better performance
+            
+            best_wedge_start = -1
+            best_wedge_end = -1
+            best_wedge_type = ""
+            best_convergence_ratio = 0.0
+            best_volume_confirm = false
+            
+            // Check all possible wedge lengths starting from 6 pivots
+            for wedge_length = 6 to max_pivots_to_check
+                wedge_start_index = array.size(pivot_values) - wedge_length
+                wedge_end_index = array.size(pivot_values) - 1
+                
+                // Extract pivot points for current wedge length
+                wedge_pivots = array.new<float>()
+                wedge_bars = array.new<int>()
+                
+                for k = wedge_start_index to wedge_end_index
+                    array.push(wedge_pivots, array.get(pivot_values, k))
+                    array.push(wedge_bars, array.get(pivot_bars, k))
+                
+                // Determine if pattern starts with high or low
+                first_pivot = array.get(wedge_pivots, 0)
+                second_pivot = array.get(wedge_pivots, 1)
+                starts_with_high = first_pivot > second_pivot
+                
+                // Separate highs and lows
+                highs = array.new<float>()
+                lows = array.new<float>()
+                high_bars = array.new<int>()
+                low_bars = array.new<int>()
+                
+                for m = 0 to array.size(wedge_pivots) - 1
+                    is_high_pivot = starts_with_high ? (m % 2 == 0) : (m % 2 == 1)
+                    
+                    if is_high_pivot
+                        array.push(highs, array.get(wedge_pivots, m))
+                        array.push(high_bars, array.get(wedge_bars, m))
+                    else
+                        array.push(lows, array.get(wedge_pivots, m))
+                        array.push(low_bars, array.get(wedge_bars, m))
+                
+                // Need at least 3 highs and 3 lows for a valid wedge
+                if array.size(highs) >= 3 and array.size(lows) >= 3
+                    // Get first and last points for trendlines
+                    first_high = array.get(highs, 0)
+                    last_high = array.get(highs, array.size(highs) - 1)
+                    first_high_bar = array.get(high_bars, 0)
+                    last_high_bar = array.get(high_bars, array.size(high_bars) - 1)
+                    
+                    first_low = array.get(lows, 0)
+                    last_low = array.get(lows, array.size(lows) - 1)
+                    first_low_bar = array.get(low_bars, 0)
+                    last_low_bar = array.get(low_bars, array.size(low_bars) - 1)
+                    
+                    // STRICT VALIDATION: Check if this could be a valid wedge structure
+                    // Calculate trendline slopes
+                    high_bar_delta = last_high_bar - first_high_bar
+                    low_bar_delta = last_low_bar - first_low_bar
+                    
+                    // Prevent division by zero
+                    if high_bar_delta == 0 or low_bar_delta == 0
+                        continue
+                    
+                    high_slope = (last_high - first_high) / high_bar_delta
+                    low_slope = (last_low - first_low) / low_bar_delta
+                    
+                    // STRICT CONVERGENCE CHECK
+                    initial_spread = math.abs(first_high - first_low)
+                    final_spread = math.abs(last_high - last_low)
+                    
+                    // Must have meaningful convergence (at least 20% reduction)
+                    if initial_spread <= 0 or final_spread >= initial_spread * 0.8
+                        continue
+                    
+                    convergence_ratio = final_spread / initial_spread
+                    
+                    // STRICT WEDGE TYPE VALIDATION
+                    bool is_valid_rising_wedge = false
+                    bool is_valid_falling_wedge = false
+                    
+                    // Rising wedge: both slopes positive, upper slope less steep, converging upward
+                    if high_slope > 0 and low_slope > 0 and high_slope < low_slope
+                        // Validate that highs and lows are actually rising
+                        highs_rising = true
+                        lows_rising = true
+                        
+                        for n = 1 to array.size(highs) - 1
+                            if array.get(highs, n) < array.get(highs, n - 1)
+                                highs_rising := false
+                                break
+                        
+                        for n = 1 to array.size(lows) - 1
+                            if array.get(lows, n) < array.get(lows, n - 1)
+                                lows_rising := false
+                                break
+                        
+                        is_valid_rising_wedge := highs_rising and lows_rising
+                    
+                    // Falling wedge: both slopes negative, upper slope less steep, converging downward
+                    else if high_slope < 0 and low_slope < 0 and high_slope < low_slope
+                        // Validate that highs and lows are actually falling
+                        highs_falling = true
+                        lows_falling = true
+                        
+                        for n = 1 to array.size(highs) - 1
+                            if array.get(highs, n) > array.get(highs, n - 1)
+                                highs_falling := false
+                                break
+                        
+                        for n = 1 to array.size(lows) - 1
+                            if array.get(lows, n) > array.get(lows, n - 1)
+                                lows_falling := false
+                                break
+                        
+                        is_valid_falling_wedge := highs_falling and lows_falling
+                    
+                    // Skip if not a valid wedge type
+                    if not is_valid_rising_wedge and not is_valid_falling_wedge
+                        continue
+                    
+                    // STRICT TRENDLINE ADHERENCE CHECK
+                    bool all_points_valid = true
+                    tolerance_percent = 0.03  // Reduced to 3% tolerance for stricter validation
+                    
+                    // Check that ALL intermediate high points are close to the high trendline
+                    for n = 1 to array.size(highs) - 2  // Skip first and last (they define the line)
+                        check_high = array.get(highs, n)
+                        check_high_bar = array.get(high_bars, n)
+                        
+                        // Calculate expected value on trendline
+                        progress = (check_high_bar - first_high_bar) / high_bar_delta
+                        expected_high = first_high + (last_high - first_high) * progress
+                        tolerance = math.abs(expected_high) * tolerance_percent
+                        
+                        // For wedges, points should be very close to trendlines
+                        if math.abs(check_high - expected_high) > tolerance
+                            all_points_valid := false
+                            break
+                    
+                    // Check that ALL intermediate low points are close to the low trendline
+                    if all_points_valid
+                        for n = 1 to array.size(lows) - 2  // Skip first and last
+                            check_low = array.get(lows, n)
+                            check_low_bar = array.get(low_bars, n)
+                            
+                            // Calculate expected value on trendline
+                            progress = (check_low_bar - first_low_bar) / low_bar_delta
+                            expected_low = first_low + (last_low - first_low) * progress
+                            tolerance = math.abs(expected_low) * tolerance_percent
+                            
+                            if math.abs(check_low - expected_low) > tolerance
+                                all_points_valid := false
+                                break
+                    
+                    // ANGLE VALIDATION
+                    if all_points_valid
+                        high_angle = calculate_angle(first_high, last_high, high_bar_delta)
+                        low_angle = calculate_angle(first_low, last_low, low_bar_delta)
+                        angle_difference = math.abs(high_angle - low_angle)
+                        
+                        // Angles should be different enough to show convergence but not too extreme
+                        if angle_difference < 5 or angle_difference > 60
+                            all_points_valid := false
+                    
+                    // TRENDLINE INTERSECTION CHECK
+                    if all_points_valid
+                        // Check if trendlines would intersect within or before the pattern
+                        // Calculate intersection point of the two trendlines
+                        
+                        slope_difference = high_slope - low_slope
+                        
+                        if math.abs(slope_difference) > 0.0001  // Avoid division by zero (parallel lines)
+                            intersection_x = (high_slope * first_high_bar - first_high + low_slope * first_low_bar - first_low) / slope_difference
+                            
+                            // For a valid wedge, the intersection should be:
+                            // 1. AFTER the end of the pattern (in the future)
+                            // 2. Not within or before the pattern timeframe
+                            
+                            pattern_end_bar = math.max(last_high_bar, last_low_bar)
+                            
+                            // If intersection occurs within or before the pattern, it's invalid
+                            if intersection_x <= pattern_end_bar
+                                all_points_valid := false
+                        else
+                            // If lines are parallel (slope difference ≈ 0), they won't converge - invalid wedge
+                            all_points_valid := false
+                    
+                    // VOLUME CONFIRMATION
+                    volume_confirms = false
+                    if all_points_valid
+                        first_bar = array.get(wedge_bars, 0)
+                        last_bar = array.get(wedge_bars, array.size(wedge_bars) - 1)
+                        volume_confirms := is_volume_decreasing(first_bar, last_bar, zigzag_length * zigzag_level)
+                    
+                    // CALCULATE FINAL PATTERN QUALITY SCORE
+                    if all_points_valid and volume_confirms  // Require volume confirmation
+                        wedge_type = is_valid_rising_wedge ? "rising" : "falling"
+                        
+                        // Score based on: length, convergence quality, and volume confirmation
+                        length_score = wedge_length / 6.0  // Normalize to 6-pivot baseline
+                        convergence_score = 1.0 - convergence_ratio  // Better convergence = higher score
+                        volume_score = volume_confirms ? 1.0 : 0.0
+                        
+                        pattern_quality = length_score * convergence_score * volume_score
+                        
+                        // Check if this is the best wedge so far (must beat previous score significantly)
+                        if pattern_quality > best_convergence_ratio + 0.1  // Require meaningful improvement
+                            best_wedge_start := wedge_start_index
+                            best_wedge_end := wedge_end_index
+                            best_wedge_type := wedge_type
+                            best_convergence_ratio := pattern_quality
+                            best_volume_confirm := volume_confirms
+            
+            // Draw the best wedge pattern found (if any)
+            if best_wedge_start >= 0 and best_wedge_end >= 0 and best_convergence_ratio > 0.1
+                // Extract the best wedge data
+                best_pivots = array.new<float>()
+                best_pivot_bars = array.new<int>()
+                
+                for k = best_wedge_start to best_wedge_end
+                    array.push(best_pivots, array.get(pivot_values, k))
+                    array.push(best_pivot_bars, array.get(pivot_bars, k))
+                
+                // Separate highs and lows for the best wedge
+                first_pivot = array.get(best_pivots, 0)
+                second_pivot = array.get(best_pivots, 1)
+                starts_with_high = first_pivot > second_pivot
+                
+                best_highs = array.new<float>()
+                best_lows = array.new<float>()
+                best_high_bars = array.new<int>()
+                best_low_bars = array.new<int>()
+                
+                for m = 0 to array.size(best_pivots) - 1
+                    is_high_pivot = starts_with_high ? (m % 2 == 0) : (m % 2 == 1)
+                    
+                    if is_high_pivot
+                        array.push(best_highs, array.get(best_pivots, m))
+                        array.push(best_high_bars, array.get(best_pivot_bars, m))
+                    else
+                        array.push(best_lows, array.get(best_pivots, m))
+                        array.push(best_low_bars, array.get(best_pivot_bars, m))
+                
+                // Get trendline endpoints (first and last of each type)
+                first_high = array.get(best_highs, 0)
+                last_high = array.get(best_highs, array.size(best_highs) - 1)
+                first_high_bar = array.get(best_high_bars, 0)
+                last_high_bar = array.get(best_high_bars, array.size(best_high_bars) - 1)
+                
+                first_low = array.get(best_lows, 0)
+                last_low = array.get(best_lows, array.size(best_lows) - 1)
+                first_low_bar = array.get(best_low_bars, 0)
+                last_low_bar = array.get(best_low_bars, array.size(best_low_bars) - 1)
+                
+                // Check for overlapping wedge patterns
+                has_overlapping_wedge = false
+                wedge_bars_to_check = array.copy(best_pivot_bars)
+                
+                for j = 0 to array.size(wedge_bars_to_check) - 1
+                    if array.includes(used_wedge_bars, array.get(wedge_bars_to_check, j))
+                        has_overlapping_wedge := true
+                        break
+
+                // Draw the extended wedge pattern
+                if not has_overlapping_wedge
+                    wedge_color = best_wedge_type == "rising" ? bearish_color : bullish_color
+                    
+                    // Find the bar position of the very last pivot in the pattern
+                    last_pivot_bar := array.get(best_pivot_bars, array.size(best_pivot_bars) - 1)
+                    
+                    // Calculate extended trendline endpoints
+                    // For the trendline that doesn't naturally end at the last pivot bar,
+                    // we need to calculate where it would be at that bar position
+                    
+                    // Upper trendline extension calculation
+                    upper_slope = (last_high - first_high) / (last_high_bar - first_high_bar)
+                    extended_upper_value = first_high + upper_slope * (last_pivot_bar - first_high_bar)
+                    
+                    // Lower trendline extension calculation  
+                    lower_slope = (last_low - first_low) / (last_low_bar - first_low_bar)
+                    extended_lower_value = first_low + lower_slope * (last_pivot_bar - first_low_bar)
+                    
+                    // CRITICAL CHECK: Ensure extended lines don't cross
+                    // For a valid wedge, the upper extended line must still be above the lower extended line
+                    lines_dont_cross = extended_upper_value > extended_lower_value
+                    
+                    // Also check that the extension doesn't create a crossing at any intermediate point
+                    bool extension_valid = lines_dont_cross
+                    
+                    if lines_dont_cross
+                        // Check at a few intermediate points between the shorter line's end and the extension end
+                        shorter_ends_first = last_high_bar < last_low_bar
+                        
+                        if shorter_ends_first
+                            // Upper line is being extended, check it doesn't cross lower line
+                            check_bars = 5  // Check 5 intermediate points
+                            for check_point = 1 to check_bars
+                                check_bar = last_high_bar + ((last_pivot_bar - last_high_bar) * check_point / check_bars)
+                                
+                                // Upper line value at check point
+                                upper_check_value = first_high + upper_slope * (check_bar - first_high_bar)
+                                
+                                // Lower line value at check point
+                                lower_check_value = first_low + lower_slope * (check_bar - first_low_bar)
+                                
+                                // Upper should still be above lower
+                                if upper_check_value <= lower_check_value
+                                    extension_valid := false
+                                    break
+                        else
+                            // Lower line is being extended, check it doesn't cross upper line
+                            check_bars = 5  // Check 5 intermediate points
+                            for check_point = 1 to check_bars
+                                check_bar = last_low_bar + ((last_pivot_bar - last_low_bar) * check_point / check_bars)
+                                
+                                // Upper line value at check point
+                                upper_check_value = first_high + upper_slope * (check_bar - first_high_bar)
+                                
+                                // Lower line value at check point
+                                lower_check_value = first_low + lower_slope * (check_bar - first_low_bar)
+                                
+                                // Upper should still be above lower
+                                if upper_check_value <= lower_check_value
+                                    extension_valid := false
+                                    break
+                    
+                    // Declare line variables
+                    var line upper_trendline = na
+                    var line lower_trendline = na
+                    
+                    // Only draw if extension doesn't create crossing
+                    if extension_valid
+                        // Draw main trend lines - both extending to the last pivot bar
+                        upper_trendline := line.new(first_high_bar, first_high, last_pivot_bar, extended_upper_value, 
+                                                 color=wedge_color, width=2, style=line.style_solid)
+                        lower_trendline := line.new(first_low_bar, first_low, last_pivot_bar, extended_lower_value, 
+                                                 color=wedge_color, width=2, style=line.style_solid)
+                    
+                    // Only add to arrays and create labels if lines were actually drawn
+                    if extension_valid and not na(upper_trendline) and not na(lower_trendline)
+                        // Add pattern label with pivot count
+                        wedge_length = array.size(best_pivots)
+                        initial_spread = math.abs(first_high - first_low)
+                        pattern_name = best_wedge_type == "rising" ? 
+                                      str.format("Rising Wedge ({0}P) - Bearish", wedge_length) : 
+                                      str.format("Falling Wedge ({0}P) - Bullish", wedge_length)
+                        
+                        label_bar = array.get(best_pivot_bars, math.round(array.size(best_pivot_bars) / 2))
+                        label_price = best_wedge_type == "rising" ? last_high + initial_spread * 0.1 : last_low - initial_spread * 0.1
+                        
+                        wedge_label = label.new(label_bar, label_price, pattern_name, 
+                                               style=label.style_none, textcolor=color.gray, 
+                                               color=wedge_color, size=size.small)
+
+                        // Store pattern elements
+                        array.push(wedge_lines, upper_trendline)
+                        array.push(wedge_lines, lower_trendline)
+                        array.push(wedge_labels, wedge_label)
+                        
+                        // Mark bars as used
+                        for j = 0 to array.size(wedge_bars_to_check) - 1
+                            array.push(used_wedge_bars, array.get(wedge_bars_to_check, j))
+
+        // === HEAD AND SHOULDERS PATTERN ANALYSIS ===
+        if effective_show_head_shoulders
+            // === VALIDATE HEAD AS EXTREME POINT WITHIN LOOKBACK ===
+            bool is_head_extreme_within_lookback = false
+            
+            // Calculate lookback period (5x the zigzag length)
+            head_lookback_period = zigzag_length * zigzag_level * 5
+            
+            // For regular H&S: check if head (p3) is the highest point in lookback period
+            if p3 > p1 and p3 > p5  // Basic head requirement
+                // Find the earliest bar to check from (lookback from head position)
+                head_earliest_bar = b3 - head_lookback_period
+                head_latest_bar = b3
+                
+                // Check if any bar in the lookback period has a higher high than the head
+                is_highest_in_head_period = true
+                head_bars_to_check = b3 - head_earliest_bar
+                
+                if head_bars_to_check > 0 and head_bars_to_check < 5000  // TradingView bar limit
+                    head_offset_from_current = bar_index - b3
+                    for j = 0 to math.min(head_bars_to_check, head_lookback_period)
+                        check_bar_offset = head_offset_from_current + j
+                        if check_bar_offset >= 0 and check_bar_offset < 5000
+                            if high[check_bar_offset] > p3
+                                is_highest_in_head_period := false
+                                break
+                
+                is_head_extreme_within_lookback := is_highest_in_head_period
+            
+            // For inverse H&S: check if head (p3) is the lowest point in lookback period  
+            else if p3 < p1 and p3 < p5  // Basic inverse head requirement
+                // Find the earliest bar to check from (lookback from head position)
+                head_earliest_bar = b3 - head_lookback_period
+                head_latest_bar = b3
+                
+                // Check if any bar in the lookback period has a lower low than the head
+                is_lowest_in_head_period = true
+                head_bars_to_check = b3 - head_earliest_bar
+                
+                if head_bars_to_check > 0 and head_bars_to_check < 5000  // TradingView bar limit
+                    head_offset_from_current = bar_index - b3
+                    for j = 0 to math.min(head_bars_to_check, head_lookback_period)
+                        check_bar_offset = head_offset_from_current + j
+                        if check_bar_offset >= 0 and check_bar_offset < 5000
+                            if low[check_bar_offset] < p3
+                                is_lowest_in_head_period := false
+                                break
+                
+                is_head_extreme_within_lookback := is_lowest_in_head_period
+
+            // === HEAD AND SHOULDERS PATTERN VALIDATION ===
+            // Classic H&S: Left Shoulder, Head, Right Shoulder pattern
+            is_head_shoulders = p1 > p0 and      // Left shoulder higher than base
+                               p1 > p2 and       // Left shoulder higher than neckline
+                               p3 > p1 and       // Head higher than left shoulder
+                               p3 > p5 and       // Head higher than right shoulder
+                               p5 < p1 and       // Right shoulder lower than left shoulder
+                               p4 < p1 and       // Valley lower than left shoulder
+                               p4 < p3 and       // Valley lower than head
+                               p0 < p2 and       // Base lower than neckline left
+                               p0 < p4 and       // Base lower than neckline right
+                               math.abs(p2 - p4) < (p1 - p2) * 0.1 and  // Neckline relatively flat
+                               math.abs(math.abs(p1 - p2) - math.abs(p5 - p4)) < math.abs(p3 - p2) * 0.1 and  // Shoulders similar height
+                               math.abs(p3 - p2) > math.abs(p1 - p2) * 1.2 and  // Head significantly higher
+                               is_head_extreme_within_lookback  // NEW: Head must be highest in lookback period
+
+            // Inverse Head and Shoulders pattern
+            is_inverse_head_shoulders = p1 < p0 and      // Left shoulder lower than base
+                                       p1 < p2 and       // Left shoulder lower than neckline
+                                       p3 < p1 and       // Head lower than left shoulder
+                                       p3 < p5 and       // Head lower than right shoulder
+                                       p5 > p1 and       // Right shoulder higher than left shoulder
+                                       p4 > p1 and       // Valley higher than left shoulder
+                                       p4 > p3 and       // Valley higher than head
+                                       p0 > p2 and       // Base higher than neckline left
+                                       p0 > p4 and       // Base higher than neckline right
+                                       math.abs(p2 - p4) < (p2 - p1) * 0.1 and  // Neckline relatively flat
+                                       math.abs(math.abs(p1 - p2) - math.abs(p5 - p4)) < math.abs(p3 - p2) * 0.1 and  // Shoulders similar depth
+                                       math.abs(p3 - p2) > math.abs(p1 - p2) * 1.2 and  // Head significantly lower
+                                       is_head_extreme_within_lookback  // NEW: Head must be lowest in lookback period
+
+            // Calculate price target
+            hs_target_move = math.abs(p3 - p2)
+            hs_target_price = is_head_shoulders ? p2 - hs_target_move : p2 + hs_target_move
+            hs_arrow_length = zigzag_length * zigzag_level * 2
+
+            // Draw Head and Shoulders pattern
+            if (is_head_shoulders or is_inverse_head_shoulders)
+                hs_color = is_head_shoulders ? bearish_color : bullish_color
+
+                // Add point labels
+                if effective_show_labels
+                    label.new(b1, p1, "LS", style=is_head_shoulders ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+                    label.new(b3, p3, "H", style=is_head_shoulders ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+                    label.new(b5, p5, "RS", style=is_head_shoulders ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+
+                // Add pattern name
+                if effective_show_names
+                    pattern_text = is_head_shoulders ? "Head and Shoulders (Bearish)" : "Inverse Head and Shoulders (Bullish)"
+                    label.new(b3, is_head_shoulders ? p3 - (p1 - p3) : p3 + (p3 - p1), 
+                             pattern_text, style=label.style_none, textcolor=color.gray, color=color.orange)
+
+                // Add price target
+                line.new(b5, p5, b5 + hs_arrow_length, hs_target_price, 
+                             color=is_inverse_head_shoulders ? bullish_color : bearish_color, width=1, style=line.style_arrow_right)
+
+                // Draw pattern structure
+                array.push(head_shoulder_lines, line.new(b0, p0, b1, p1, color=hs_color, width=2))
+                array.push(head_shoulder_lines, line.new(b1, p1, b2, p2, color=hs_color, width=2))
+                array.push(head_shoulder_lines, line.new(b2, p2, b3, p3, color=hs_color, width=2))
+                array.push(head_shoulder_lines, line.new(b3, p3, b4, p4, color=hs_color, width=2))
+                array.push(head_shoulder_lines, line.new(b4, p4, b5, p5, color=hs_color, width=2))
+
+// ==================== 4-POINT PATTERN DETECTION ====================
+
+if array.size(pivot_values) >= 4 and effective_show_double
+    current_double_bar = array.get(pivot_bars, array.size(pivot_bars) - 1)
+    length_changed_double = na(last_zigzag_length_double) or last_zigzag_length_double != zigzag_length * zigzag_level
+    should_redraw = length_changed_double or bar_index == last_bar_index or na(last_processed_double_bar)
+
+    if na(last_processed_double_bar) or current_double_bar != last_processed_double_bar or should_redraw
+        last_processed_double_bar := current_double_bar
+        last_zigzag_length_double := zigzag_length * zigzag_level
+
+        // Get 4 most recent pivot points for double pattern
+        i = array.size(pivot_values) - 4
+        double_p0 = array.get(pivot_values, i)
+        double_p1 = array.get(pivot_values, i + 1)
+        double_p2 = array.get(pivot_values, i + 2)
+        double_p3 = array.get(pivot_values, i + 3)
+        
+        double_b0 = array.get(pivot_bars, i)
+        double_b1 = array.get(pivot_bars, i + 1)
+        double_b2 = array.get(pivot_bars, i + 2)
+        double_b3 = array.get(pivot_bars, i + 3)
+
+        // === DOUBLE TOP PATTERN VALIDATION ===
+        // Pattern: p1 and p3 are similar peaks, p2 is the valley between them
+        is_double_top = double_p1 > double_p0 and          // First peak higher than base
+                       double_p1 > double_p2 and           // First peak higher than valley
+                       double_p3 > double_p2 and           // Second peak higher than valley
+                       math.abs(double_p1 - double_p3) < math.abs(double_p1 - double_p2) * 0.02 and  // Peaks are similar height
+                       math.abs(double_p3 - double_p2) > math.abs(double_p1 - double_p0) * 0.3 and   // Significant valley depth
+                       math.abs(double_p1 - double_p2) > 0  // Prevent division by zero
+
+        // === DOUBLE BOTTOM PATTERN VALIDATION ===
+        // Pattern: p1 and p3 are similar lows, p2 is the peak between them
+        is_double_bottom = double_p1 < double_p0 and       // First bottom lower than base
+                          double_p1 < double_p2 and        // First bottom lower than peak
+                          double_p3 < double_p2 and        // Second bottom lower than peak
+                          math.abs(double_p1 - double_p3) < math.abs(double_p1 - double_p2) * 0.02 and  // Bottoms are similar depth
+                          math.abs(double_p3 - double_p2) > math.abs(double_p1 - double_p0) * 0.5 and   // Significant peak height
+                          math.abs(double_p2 - double_p1) > 0 and                                        // Prevent division by zero
+                          (double_p0 - double_p1) > math.abs(double_p1 - double_p2) * 1                 // Base significantly higher
+
+        // === ADDITIONAL VALIDATION: CHECK FOR EXTREME POINTS WITHIN LOOKBACK ===
+        bool is_extreme_within_lookback = false
+        
+        if is_double_top or is_double_bottom
+            // Calculate lookback period (5x the zigzag length)
+            lookback_period = zigzag_length * zigzag_level * 5
+            
+            if is_double_top
+                // First top = p1
+                lookback_bars = zigzag_length * zigzag_level * 5
+                offset_p1 = bar_index - double_b1
+
+                // Only check if p1 is far enough back to allow lookback
+                is_highest = true
+                if offset_p1 + lookback_bars < 5000  // Stay within TV limit
+                    for i = offset_p1 + 1 to offset_p1 + lookback_bars
+                        if high[i] > double_p1
+                            is_highest := false
+                            break
+
+                is_extreme_within_lookback := is_highest
+                
+            else if is_double_bottom
+                lookback_bars = zigzag_length * zigzag_level * 5
+                offset_p1 = bar_index - double_b1
+
+                is_lowest = true
+                if offset_p1 + lookback_bars < 5000  // Stay within TradingView limits
+                    for i = offset_p1 + 1 to offset_p1 + lookback_bars
+                        if low[i] < double_p1
+                            is_lowest := false
+                            break
+
+                is_extreme_within_lookback := is_lowest
+
+        // Calculate price targets
+        double_target_move = math.abs(double_p3 - double_p2)
+        double_target_price = is_double_top ? double_p2 - double_target_move : double_p2 + double_target_move
+        double_arrow_length = zigzag_length * zigzag_level * 2
+
+        // Draw Double Top/Bottom pattern (only if extreme within lookback)
+        if (is_double_top or is_double_bottom) and is_extreme_within_lookback
+            double_color = is_double_top ? bearish_color : bullish_color
+
+            // Add point labels
+            if effective_show_labels
+                label.new(double_b1, double_p1, "1", style=is_double_top ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+                label.new(double_b3, double_p3, "2", style=is_double_top ? label.style_label_down : label.style_label_up, color=color.blue, size=size.tiny)
+
+            // Add pattern name
+            if effective_show_names
+                pattern_text = is_double_top ? "Double Top (Bearish)" : "Double Bottom (Bullish)"
+                label.new(double_b3, is_double_top ? double_p3 - (double_p1 - double_p3) : double_p3 + (double_p3 - double_p1), 
+                         pattern_text, style=label.style_none, textcolor=color.gray, color=color.orange)
+
+            // Add price target projection (similar to head and shoulders)
+            line.new(double_b3, double_p3, double_b3 + double_arrow_length, double_target_price, 
+                     color=is_double_bottom ? bullish_color : bearish_color, width=1, style=line.style_arrow_right)
+
+            // Draw pattern structure
+            array.push(head_shoulder_lines, line.new(double_b0, double_p0, double_b1, double_p1, color=double_color, width=2))
+            array.push(head_shoulder_lines, line.new(double_b1, double_p1, double_b2, double_p2, color=double_color, width=2))
+            array.push(head_shoulder_lines, line.new(double_b2, double_p2, double_b3, double_p3, color=double_color, width=2))
+
+// ==================== CLEANUP AND REFRESH LOGIC ====================
+
+// Clear patterns when parameters change
+if na(last_zigzag_length) or zigzag_length * zigzag_level != last_zigzag_length
+    last_zigzag_length := zigzag_length * zigzag_level
+    array.clear(pivot_values)
+    array.clear(pivot_bars)
+    array.clear(used_wedge_bars)
+    last_processed_harmonic_bar := na
+    clear_all_patterns()
+    force_pivot_refresh := true
+    // Reset last pivot bar tracking when parameters change
+    last_pivot_bar := na
+
+// ==================== GLOBAL SCOPE PLOTTING ====================
+
+// Plot zigzag lines
+plotshape(show_zigzag_only and show_high_pivot and effective_show_labels, 
+          style=shape.triangledown, location=location.abovebar, 
+          color=color.red, size=size.small, title="Current ZigZag High")
+          
+plotshape(show_zigzag_only and show_low_pivot and effective_show_labels, 
+          style=shape.triangleup, location=location.belowbar, 
+          color=color.lime, size=size.small, title="Current ZigZag Low")
+
+
+
+// ==================== ALERTS ====================
+
+alertcondition(new_extreme_d_pattern_detected, title="New Harmonic Pattern", message="New {{detected_pattern_text}} detected on {{ticker}} at {{time}}")
