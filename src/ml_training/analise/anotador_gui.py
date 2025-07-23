@@ -1,4 +1,4 @@
-# anotador_gui.py (v9.1 - Buffer de Visualização Adaptável)
+# anotador_gui.py (v10.1 - Final com Extender Barra e Sincronia Dinâmica)
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -13,26 +13,45 @@ from typing import List, Dict, Any, Optional
 
 class Config:
     """ Parâmetros de configuração centralizados para a GUI. """
-    TIMEFRAME_PARAMS = {
-    # 'depth' é a janela de validação estrutural
-    # 'deviation' é o gatilho de reversão em porcentagem
+    # --- MUDANÇA 1: REINTRODUZIDO O INTERRUPTOR PARA EXTENDER A BARRA ---
+    ZIGZAG_EXTEND_TO_LAST_BAR = True
+
+    # --- MUDANÇA 2: LISTA COMPLETA DE ESTRATÉGIAS PARA SINCRONIA PERFEITA ---
+    # O anotador agora conhece todas as estratégias que o gerador usou.
+    STRATEGIES = [
+        {
+            "name": "Oficial_HighLow",
+            "price_source": "high_low",
+            "params": {
+                'default': {'depth': 2, 'deviation': 2.0},
+                '1h':      {'depth': 3, 'deviation': 4.0},
+                '4h':      {'depth': 3, 'deviation': 5.0},
+                '1d':      {'depth': 5, 'deviation': 8.0}
+            }
+        },
+        {
+            "name": "Oficial_ClosePrice",
+            "price_source": "close",
+            "params": {
+                'default': {'depth': 2, 'deviation': 2.0},
+                '1h':      {'depth': 3, 'deviation': 4.0},
+                '4h':      {'depth': 3, 'deviation': 5.0},
+                '1d':      {'depth': 5, 'deviation': 8.0}
+            }
+        }
+    ]
     
-    'default': {'depth': 2, 'deviation': 2.0},
-    '1h':      {'depth': 3, 'deviation': 4.0},
-    '4h':      {'depth': 3, 'deviation': 5.0},
-    '1d':      {'depth': 5, 'deviation': 8.0}
-    }
-    
-    ARQUIVO_ENTRADA = 'data/datasets_hns_oficial/dataset_hns_consolidado_final.csv'
-    ARQUIVO_SAIDA = 'data/datasets/filtered/dataset_hns_labeled_oficial.csv'
+    ARQUIVO_ENTRADA = 'data/datasets_hns_completo/dataset_hns_consolidado_completo.csv'
+    ARQUIVO_SAIDA = 'data/datasets_hns_completo/dataset_hns_consolidado_analisado.csv'
     
     MAX_DOWNLOAD_TENTATIVAS = 3
     RETRY_DELAY_SEGUNDOS = 5
 
 class LabelingTool(tk.Tk):
+    # O __init__ e outras funções permanecem os mesmos...
     def __init__(self, arquivo_entrada: str, arquivo_saida: str):
         super().__init__()
-        self.title(f"Ferramenta de Anotação (v9.1 - Buffer Adaptável)")
+        self.title(f"Ferramenta de Anotação (v10.1 - Sincronizado)")
         self.geometry("1300x900")
         self.arquivo_saida = arquivo_saida
         self.df_trabalho: Optional[pd.DataFrame] = None
@@ -90,14 +109,12 @@ class LabelingTool(tk.Tk):
         padrao_info = self.df_trabalho.loc[self.indice_atual]
         ticker, intervalo = padrao_info['ticker'], padrao_info['intervalo']
         
-        df_full = None
+        df_full = None # ... (lógica de download idêntica à v9.2)
         for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
             try:
                 periodo_busca = '5y'
                 if 'm' in intervalo: periodo_busca = '60d'
                 elif 'h' in intervalo: periodo_busca = '2y'
-                
-                print(f"Buscando dados para {ticker} ({intervalo})... Tentativa {tentativa + 1}/{Config.MAX_DOWNLOAD_TENTATIVAS}")
                 df_full = yf.download(tickers=ticker, period=periodo_busca, interval=intervalo, auto_adjust=True, progress=False)
                 if not df_full.empty:
                     if isinstance(df_full.columns, pd.MultiIndex): df_full.columns = df_full.columns.get_level_values(0)
@@ -105,46 +122,38 @@ class LabelingTool(tk.Tk):
                     break
                 else: raise ValueError("Download retornou um DataFrame vazio.")
             except Exception as e:
-                print(f"Falha na tentativa {tentativa + 1}: {e}")
                 if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1: time.sleep(Config.RETRY_DELAY_SEGUNDOS)
-                else:
-                    self.marcar_e_avancar(-1)
-                    return
+                else: self.marcar_e_avancar(-1); return
         
         df_full.index = df_full.index.tz_localize(None)
         data_inicio = pd.to_datetime(padrao_info['data_inicio']).tz_localize(None)
         data_fim = pd.to_datetime(padrao_info['data_fim']).tz_localize(None)
         
-        if pd.isna(data_inicio) or pd.isna(data_fim):
-            self.marcar_e_avancar(-1)
-            return
+        if pd.isna(data_inicio) or pd.isna(data_fim): self.marcar_e_avancar(-1); return
             
         duracao = data_fim - data_inicio
-        
-        # --- INÍCIO DA MUDANÇA: Lógica de Buffer Adaptável ---
-        if 'm' in intervalo:
-            base_buffer = pd.Timedelta(hours=12) # Buffer de 12 horas para timeframes de minutos
-        elif '1h' in intervalo:
-            base_buffer = pd.Timedelta(days=2) # Buffer de 2 dias para o timeframe de 1h
-        elif '4h' in intervalo:
-            base_buffer = pd.Timedelta(days=5) # Buffer de 5 dias para o timeframe de 4h
-        else: # '1d' ou maior
-            base_buffer = pd.Timedelta(days=15) # Buffer de 15 dias para timeframes diários
-
-        # O buffer final é o maior entre o buffer base para o timeframe e um valor relativo à duração do padrão
+        if 'm' in intervalo: base_buffer = pd.Timedelta(hours=12)
+        elif '1h' in intervalo: base_buffer = pd.Timedelta(days=2)
+        elif '4h' in intervalo: base_buffer = pd.Timedelta(days=5)
+        else: base_buffer = pd.Timedelta(days=15)
         buffer = max(base_buffer, duracao * 1.5)
-        print(f"Duração do Padrão: {duracao}. Usando buffer de visualização de: {buffer}.")
-        # --- FIM DA MUDANÇA ---
         
         df_view = df_full.loc[data_inicio - buffer : data_fim + buffer].copy()
+        if df_view.empty: self.marcar_e_avancar(-1); return
 
-        if df_view.empty:
-            self.marcar_e_avancar(-1)
-            return
-
-        params = Config.TIMEFRAME_PARAMS.get(intervalo, Config.TIMEFRAME_PARAMS['default'])
-        pivots = self._calcular_zigzag_oficial_para_plot(df_view, params['depth'], params['deviation'])
-        zigzag_line = self._preparar_zigzag_plot(pivots, df_view.index)
+        # --- MUDANÇA 3: LÓGICA DE VISUALIZAÇÃO 100% DINÂMICA ---
+        estrategia_str = padrao_info.get('estrategia_zigzag', 'Oficial_HighLow')
+        
+        # Encontra a estratégia e os parâmetros corretos na Config
+        strategy_config = next((s for s in Config.STRATEGIES if s["name"] in estrategia_str), Config.STRATEGIES[0])
+        price_source_visual = strategy_config['price_source']
+        params = strategy_config['params'].get(intervalo, strategy_config['params']['default'])
+        
+        print(f"Visualizando padrão da estratégia '{estrategia_str}'. Usando fonte='{price_source_visual}', depth={params['depth']}, dev={params['deviation']}%")
+        
+        pivots = self._calcular_zigzag_oficial_para_plot(df_view, params['depth'], params['deviation'], price_source_visual)
+        
+        zigzag_line = self._preparar_zigzag_plot(pivots, df_view)
         ad_plot = [mpf.make_addplot(zigzag_line, color='blue', width=1.2)] if not zigzag_line.empty else []
 
         fig, axlist = mpf.plot(df_view, type='candle', style='charles', returnfig=True, figsize=(12, 8), addplot=ad_plot, title=f"{ticker} ({intervalo}) - Padrão {self.indice_atual}", warn_too_much_data=10000)
@@ -163,17 +172,18 @@ class LabelingTool(tk.Tk):
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    def _calcular_zigzag_oficial_para_plot(self, df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
-        # ... (código desta função permanece idêntico)
-        if len(df) < 2: return []
+    def _calcular_zigzag_oficial_para_plot(self, df: pd.DataFrame, depth: int, deviation_percent: float, price_source: str) -> List[Dict[str, Any]]:
+        # A função em si não muda, pois já recebe os parâmetros dinamicamente
+        # ... (cole a função da v9.1 aqui)
+        if price_source == 'high_low': peak_series, valley_series = df['high'], df['low']
+        else: peak_series, valley_series = df['close'], df['close']
         window_size = 2 * depth + 1
-        rolling_max = df['high'].rolling(window=window_size, center=True, min_periods=1).max()
-        rolling_min = df['low'].rolling(window=window_size, center=True, min_periods=1).min()
-        candidate_peaks_df = df[df['high'] == rolling_max]
-        candidate_valleys_df = df[df['low'] == rolling_min]
+        rolling_max = peak_series.rolling(window=window_size, center=True, min_periods=1).max()
+        rolling_min = valley_series.rolling(window=window_size, center=True, min_periods=1).min()
+        candidate_peaks_df, candidate_valleys_df = df[peak_series == rolling_max], df[valley_series == rolling_min]
         candidates = []
-        for idx, row in candidate_peaks_df.iterrows(): candidates.append({'idx': idx, 'preco': row['high'], 'tipo': 'PICO'})
-        for idx, row in candidate_valleys_df.iterrows(): candidates.append({'idx': idx, 'preco': row['low'], 'tipo': 'VALE'})
+        for idx, row in candidate_peaks_df.iterrows(): candidates.append({'idx': idx, 'preco': row[peak_series.name], 'tipo': 'PICO'})
+        for idx, row in candidate_valleys_df.iterrows(): candidates.append({'idx': idx, 'preco': row[valley_series.name], 'tipo': 'VALE'})
         candidates = sorted(list({p['idx']: p for p in candidates}.values()), key=lambda x: x['idx'])
         if len(candidates) < 2: return []
         confirmed_pivots = [candidates[0]]
@@ -181,25 +191,25 @@ class LabelingTool(tk.Tk):
         for i in range(1, len(candidates)):
             candidate = candidates[i]
             if candidate['tipo'] == last_pivot['tipo']:
-                if (candidate['tipo'] == 'PICO' and candidate['preco'] > last_pivot['preco']) or \
-                   (candidate['tipo'] == 'VALE' and candidate['preco'] < last_pivot['preco']):
-                    confirmed_pivots[-1] = candidate
-                    last_pivot = candidate
+                if (candidate['tipo'] == 'PICO' and candidate['preco'] > last_pivot['preco']) or (candidate['tipo'] == 'VALE' and candidate['preco'] < last_pivot['preco']):
+                    confirmed_pivots[-1] = candidate; last_pivot = candidate
                 continue
             if last_pivot['preco'] == 0: continue
             price_dev = abs(candidate['preco'] - last_pivot['preco']) / last_pivot['preco'] * 100
             if price_dev >= deviation_percent:
-                confirmed_pivots.append(candidate)
-                last_pivot = candidate
+                confirmed_pivots.append(candidate); last_pivot = candidate
         return confirmed_pivots
 
-    def _preparar_zigzag_plot(self, pivots: List[Dict[str, Any]], df_index: pd.Index) -> pd.Series:
-        # ... (código desta função permanece idêntico)
-        if not pivots: return pd.Series(np.nan, index=df_index)
-        zigzag_points = pd.Series(np.nan, index=df_index)
+    def _preparar_zigzag_plot(self, pivots: List[Dict[str, Any]], df_view: pd.DataFrame) -> pd.Series:
+        # --- MUDANÇA 4: A LÓGICA DE EXTENDER A BARRA FOI REINTRODUZIDA ---
+        if df_view.empty: return pd.Series()
+        zigzag_points = pd.Series(np.nan, index=df_view.index)
+        if not pivots: return zigzag_points
         for p in pivots:
-            if p['idx'] in zigzag_points.index:
-                zigzag_points.loc[p['idx']] = p['preco']
+            if p['idx'] in zigzag_points.index: zigzag_points.loc[p['idx']] = p['preco']
+        if Config.ZIGZAG_EXTEND_TO_LAST_BAR:
+            last_close, last_index = df_view['close'].iloc[-1], df_view.index[-1]
+            zigzag_points.loc[last_index] = last_close
         return zigzag_points.interpolate(method='linear')
 
     def on_key_press(self, event: tk.Event):
@@ -224,15 +234,15 @@ class LabelingTool(tk.Tk):
         feitos = self.df_trabalho['label_humano'].notna().sum()
         padrao = self.df_trabalho.loc[self.indice_atual]
         info_text = (f"Progresso: {feitos}/{total} | Padrão Índice: {self.indice_atual}\n"
-                     f"Ativo: {padrao['ticker']} ({padrao['intervalo']}) | Tipo: {padrao['tipo_padrao']}")
+                     f"Ativo: {padrao['ticker']} ({padrao['intervalo']}) | Tipo: {padrao['tipo_padrao']}\n"
+                     f"Estratégia: {padrao.get('estrategia_zigzag', 'N/A')}")
         self.info_label.config(text=info_text)
 
 if __name__ == '__main__':
     os.makedirs(os.path.dirname(Config.ARQUIVO_ENTRADA), exist_ok=True)
     os.makedirs(os.path.dirname(Config.ARQUIVO_SAIDA), exist_ok=True)
-    
     if not os.path.exists(Config.ARQUIVO_ENTRADA):
-        messagebox.showerror("Erro de Arquivo", f"Arquivo de entrada não encontrado!\n{Config.ARQUIVO_ENTRADA}\n\nPor favor, execute o script gerador de dados (v12/v13) primeiro.")
+        messagebox.showerror("Erro de Arquivo", f"Arquivo de entrada não encontrado!\n{Config.ARQUIVO_ENTRADA}\n\nPor favor, execute o script gerador (v14+) primeiro.")
     else:
         app = LabelingTool(Config.ARQUIVO_ENTRADA, Config.ARQUIVO_SAIDA)
         app.mainloop()
