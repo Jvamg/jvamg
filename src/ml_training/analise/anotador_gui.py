@@ -41,7 +41,7 @@ class Config:
         }
     ]
     
-    ARQUIVO_ENTRADA = 'data/datasets_hns_completo/dataset_hns_consolidado_completo.csv'
+    ARQUIVO_ENTRADA = 'data/datasets_hns_completo/dataset_hns_consolidado_enriquecido.csv'
     ARQUIVO_SAIDA = 'data/datasets_hns_completo/dataset_hns_consolidado_analisado.csv'
     
     MAX_DOWNLOAD_TENTATIVAS = 3
