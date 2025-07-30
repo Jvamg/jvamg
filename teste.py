@@ -43,7 +43,7 @@ class Config:
         'valid_ombro_direito_fraco': 5,
         'valid_perfil_volume': 5
     }
-    MINIMUM_SCORE_TO_SAVE = 70
+    MINIMUM_SCORE_TO_SAVE = 100
 
     # Parâmetros de validação
     HEAD_SIGNIFICANCE_RATIO = 1.2
