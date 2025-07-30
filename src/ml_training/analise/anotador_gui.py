@@ -1,4 +1,4 @@
-# anotador_gui.py (v11.0 - ASSISTENTE DE VALIDAÇÃO COMPLETO)
+# anotador_gui.py (v12.3 - Correção do Erro de Atributo)
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -26,15 +26,16 @@ class Config:
     }
 
     # Arquivos de entrada e saída
-    ARQUIVO_ENTRADA = 'data/datasets_hns_validados/dataset_hns_validado_confluencia.csv'
-    ARQUIVO_SAIDA = 'data/datasets/filtered/dataset_hns_labeled_confluencia.csv'
+    ARQUIVO_ENTRADA = 'data/datasets_hns_scored_mandatory/dataset_hns_scored_mandatory_final.csv'
+    ARQUIVO_SAIDA = 'data/datasets_hns_scored_mandatory/dataset_hns_labeled_confluencia.csv'
 
     MAX_DOWNLOAD_TENTATIVAS = 3
     RETRY_DELAY_SEGUNDOS = 5
     ZIGZAG_LOOKBACK_DAYS = 120  # Lookback para encontrar a âncora do ZigZag
 
 # --- FUNÇÕES DE VALIDAÇÃO (para o assistente visual) ---
-
+# NOTA: Estas funções não estão sendo usadas ativamente na GUI v12,
+# mas são mantidas para referência ou uso futuro. A validação é lida do CSV.
 
 def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
     try:
@@ -85,7 +86,7 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
 
         # Pega os pivôs adjacentes para definir os períodos de volume
         p0_idx, p2_idx, p4_idx = pivots[idx_p1 -
-                                        1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
+                                      1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
 
         vol_cabeca = df.loc[p2_idx:p3_idx]['volume'].mean()
         vol_od = df.loc[p4_idx:p5_idx]['volume'].mean()
@@ -99,12 +100,21 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
 class LabelingTool(tk.Tk):
     def __init__(self, arquivo_entrada: str, arquivo_saida: str):
         super().__init__()
-        self.title(f"Ferramenta de Anotação (v11.0 - Assistente de Validação)")
+        self.title(f"Ferramenta de Anotação (v12.3 - Corrigido)")
         self.geometry("1300x950")
         self.arquivo_saida = arquivo_saida
         self.df_trabalho: Optional[pd.DataFrame] = None
         self.indice_atual: int = 0
         self.fig: Optional[plt.Figure] = None
+
+        self.regras_map = {
+            'valid_extremo_cabeca': 'Cabeça é o Extremo', 'valid_contexto_cabeca': 'Contexto Relevante',
+            'valid_divergencia_rsi': 'Divergência RSI', 'valid_divergencia_macd': 'Divergência MACD',
+            'valid_proeminencia_cabeca': 'Cabeça Proeminente', 'valid_simetria_ombros': 'Simetria de Ombros',
+            'valid_neckline_plana': 'Neckline Plana', 'valid_ombro_direito_fraco': 'Ombro Direito Fraco',
+            'valid_base_tendencia': 'Estrutura de Tendência', 'valid_perfil_volume': 'Perfil de Volume'
+        }
+
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
             self.destroy()
             return
@@ -118,22 +128,55 @@ class LabelingTool(tk.Tk):
         m.pack(fill=tk.BOTH, expand=True)
         self.frame_grafico = tk.Frame(m)
         m.add(self.frame_grafico, minsize=400)
-
-        frame_controles = tk.Frame(m, height=120)
+        
+        frame_controles = tk.Frame(m, height=150)
         frame_controles.pack_propagate(False)
-        m.add(frame_controles, minsize=120)
+        m.add(frame_controles, minsize=150)
+        
+        # --- Usando o gerenciador GRID para layout ---
+        frame_controles.grid_rowconfigure(0, weight=1)
+        frame_controles.grid_columnconfigure(0, weight=1)
+        frame_controles.grid_columnconfigure(1, weight=2) # Boletim terá o dobro do espaço
 
-        self.info_label = tk.Label(frame_controles, text="Carregando...", font=(
-            "Arial", 11), justify=tk.LEFT, anchor="w")
-        self.info_label.pack(side=tk.LEFT, padx=10, pady=5)
+        # -- Frame da Esquerda --
+        frame_info = tk.Frame(frame_controles)
+        frame_info.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        
+        self.info_label = tk.Label(frame_info, text="Carregando...", font=("Segoe UI", 10), justify=tk.LEFT, anchor="nw")
+        self.info_label.pack(side=tk.TOP, anchor="w", pady=(0, 10))
+        
+        self.action_label = tk.Label(frame_info, text="Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Segoe UI", 12, "bold"))
+        self.action_label.pack(side=tk.BOTTOM, anchor="w")
 
-        self.action_label = tk.Label(
-            frame_controles, text="Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Arial", 12, "bold"))
-        self.action_label.pack(side=tk.RIGHT, padx=10, pady=5)
+        # -- Frame da Direita (Boletim) --
+        frame_boletim = tk.Frame(frame_controles, relief=tk.RIDGE, borderwidth=1)
+        frame_boletim.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
+        
+        # Título
+        tk.Label(frame_boletim, text="Boletim de Validação do Padrão", font=("Segoe UI", 11, "bold")).pack(pady=(5,10))
+        
+        # Frame para a grade de validações
+        grid_frame = tk.Frame(frame_boletim)
+        grid_frame.pack(fill=tk.BOTH, expand=True, padx=15)
+        grid_frame.grid_columnconfigure(0, weight=1) # Coluna nomes
+        grid_frame.grid_columnconfigure(1, weight=1) # Coluna status
+        
+        self.boletim_labels = {}
+        
+        # Cria as labels para cada regra em uma grade
+        for i, (key, name) in enumerate(self.regras_map.items()):
+            # Separa em duas colunas para não ficar muito longo
+            col_base = 0 if i < 5 else 2
+            
+            tk.Label(grid_frame, text=f"{name}:", font=("Segoe UI", 9), anchor="w").grid(row=i % 5, column=col_base, sticky="w", padx=(0,10))
+            
+            result_label = tk.Label(grid_frame, text="...", font=("Segoe UI", 9, "bold"), anchor="w")
+            result_label.grid(row=i % 5, column=col_base + 1, sticky="w")
+            self.boletim_labels[key] = result_label
 
-        self.validation_label = tk.Label(frame_controles, text="Status Validação:", font=(
-            "Arial", 10, "bold"), relief=tk.RIDGE, padx=5, pady=2)
-        self.validation_label.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+        # Label separada para o Score Final
+        self.score_label = tk.Label(frame_boletim, text="SCORE FINAL: N/A", font=("Segoe UI", 11, "bold"), fg="#1E90FF")
+        self.score_label.pack(side=tk.BOTTOM, pady=5)
 
     def setup_dataframe(self, arquivo_entrada: str, arquivo_saida: str) -> bool:
         try:
@@ -217,15 +260,16 @@ class LabelingTool(tk.Tk):
             return
 
         duracao = data_fim - data_inicio
-        if 'm' in intervalo:
+        if 'm' in intervalo: 
             base_buffer = pd.Timedelta(hours=12)
-        elif '1h' in intervalo:
-            base_buffer = pd.Timedelta(days=5)
-        elif '4h' in intervalo:
-            base_buffer = pd.Timedelta(days=10)
-        else:
-            base_buffer = pd.Timedelta(days=20)
-        buffer = max(base_buffer, duracao * 1.5)
+        elif '1h' in intervalo: 
+            base_buffer = pd.Timedelta(days=3)
+        elif '4h' in intervalo: 
+            base_buffer = pd.Timedelta(days=7)
+        else: 
+            base_buffer = pd.Timedelta(days=15)
+
+        buffer = base_buffer + (duracao * 0.75)
 
         df_view = df_full.loc[data_inicio - buffer: data_fim + buffer].copy()
         if df_view.empty:
@@ -258,12 +302,12 @@ class LabelingTool(tk.Tk):
         ad_plots.extend([rsi_plot, macd_lines, macd_hist])
 
         # --- PLOTAGEM MULTI-PAINEL ---
-        self.fig, axlist = mpf.plot(df_view, type='candle', style='charles', returnfig=True,
-                                    figsize=(12, 9), addplot=ad_plots,
-                                    panels=4, panel_ratios=(6, 2, 2, 2),
-                                    title=f"{ticker} ({intervalo}) - Padrão {self.indice_atual}",
-                                    volume=True, volume_panel=3,
-                                    warn_too_much_data=10000)
+        self.fig, axlist = mpf.plot(df_view, type='candle', style='charles', returnfig=True, 
+                                     figsize=(13, 10), addplot=ad_plots, # Tamanho aumentado
+                                     panel_ratios=(10, 2, 2, 2), # Proporção 10 para preço, muito maior
+                                     title=f"{ticker} ({intervalo}) - Padrão {self.indice_atual}", 
+                                     volume=True, volume_panel=3,
+                                     warn_too_much_data=10000)
 
         ax_price = axlist[0]
         start_pos, end_pos = df_view.index.get_indexer([data_inicio], method='nearest')[
@@ -277,33 +321,17 @@ class LabelingTool(tk.Tk):
             ax_price.axvline(x=head_pos, color='dodgerblue',
                              linestyle='--', linewidth=1.2)
 
-        self.validar_e_exibir_status(df_full, padrao_info)
+        # A chamada para a função problemática foi removida daqui.
+        # A atualização do painel agora é feita apenas por atualizar_info_label().
 
         canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    def validar_e_exibir_status(self, df_historico: pd.DataFrame, padrao_info: pd.Series):
-        p1_idx, p3_idx = padrao_info['data_inicio'], padrao_info['data_cabeca']
-        p1_price, p3_price = padrao_info['ombro1_preco'], padrao_info['cabeca_preco']
-        tipo = padrao_info['tipo_padrao']
-
-        rsi_ok = check_rsi_divergence(
-            df_historico, p1_idx, p3_idx, p1_price, p3_price, tipo)
-        macd_ok = check_macd_divergence(
-            df_historico, p1_idx, p3_idx, p1_price, p3_price, tipo)
-
-        # A validação de volume é complexa, por enquanto lemos do CSV se existir
-        volume_status_str = str(padrao_info.get(
-            'volume_confirmou', 'N/A')).strip()
-        volume_ok = True if volume_status_str == 'True' else False
-
-        status_text = f"RSI Divergence: {'OK ✅' if rsi_ok else 'FALHA ❌'} | "
-        status_text += f"MACD Divergence: {'OK ✅' if macd_ok else 'FALHA ❌'} | "
-        status_text += f"Volume Profile: {'OK ✅' if volume_ok else 'FALHA ❌'}"
-
-        cor_fundo = 'lightgreen' if rsi_ok and macd_ok and volume_ok else 'salmon'
-        self.validation_label.config(text=status_text, bg=cor_fundo)
+    # --- FUNÇÃO REMOVIDA ---
+    # A função 'validar_e_exibir_status' foi removida pois era redundante
+    # e causava o erro. A função 'atualizar_info_label' já lida com a
+    # atualização de todos os painéis de informação.
 
     def _calcular_zigzag(self, df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
         # ... (cópia da função 'calcular_zigzag_oficial' do gerador)
@@ -362,7 +390,6 @@ class LabelingTool(tk.Tk):
             zigzag_points.loc[last_index] = last_close
         return zigzag_points.interpolate(method='linear')
 
-    # ... (O resto das funções - on_key_press, etc. - são as mesmas)
     def on_key_press(self, event: tk.Event):
         key = event.keysym.lower()
         if key in ['a', 'r']:
@@ -384,15 +411,34 @@ class LabelingTool(tk.Tk):
         self.destroy()
 
     def atualizar_info_label(self):
+        """ Atualiza os painéis de informação da UI com os dados do padrão atual, incluindo o score e o boletim de validação detalhado. """
         if self.df_trabalho is None:
             return
+
         total = len(self.df_trabalho)
         feitos = self.df_trabalho['label_humano'].notna().sum()
         padrao = self.df_trabalho.loc[self.indice_atual]
+
+        # --- Atualiza o Painel de Informações Básicas (Esquerda) ---
         info_text = (f"Progresso: {feitos}/{total} | Padrão Índice: {self.indice_atual}\n"
-                     f"Ativo: {padrao['ticker']} ({padrao['intervalo']}) | Tipo: {padrao['tipo_padrao']}\n"
+                     f"Ativo: {padrao['ticker']} ({padrao['intervalo']})\n"
+                     f"Tipo: {padrao['tipo_padrao']}\n"
                      f"Estratégia: {padrao.get('estrategia_zigzag', 'N/A')}")
         self.info_label.config(text=info_text)
+
+        # --- Atualiza o Boletim de Validação (Direita) ---
+        score = padrao.get('score_total', 0)
+        self.score_label.config(text=f"SCORE FINAL: {score:.0f} / 100")
+
+        # Itera sobre o mapa de regras para preencher o boletim
+        for key, name in self.regras_map.items():
+            if key in self.boletim_labels:
+                status_bool = padrao.get(key, False)
+                status_text = "SIM" if status_bool else "NÃO"
+                status_color = "green" if status_bool else "red"
+
+                # Atualiza a label correspondente com o texto e a cor
+                self.boletim_labels[key].config(text=status_text, fg=status_color)
 
 
 if __name__ == '__main__':
