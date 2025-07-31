@@ -20,9 +20,9 @@ class Config:
     # Parâmetros para o ZIGZAG VISUAL (devem espelhar a estratégia principal do gerador)
     TIMEFRAME_PARAMS = {
         'default': {'depth': 2, 'deviation': 2.0},
-        '1h':      {'depth': 3, 'deviation': 4.0},
+        '1h':      {'depth': 2, 'deviation': 3.0},
         '4h':      {'depth': 3, 'deviation': 5.0},
-        '1d':      {'depth': 5, 'deviation': 8.0}
+        '1d':      {'depth': 35, 'deviation': 10.0}
     }
 
     # Arquivos de entrada e saída
@@ -31,7 +31,7 @@ class Config:
 
     MAX_DOWNLOAD_TENTATIVAS = 3
     RETRY_DELAY_SEGUNDOS = 5
-    ZIGZAG_LOOKBACK_DAYS = 120  # Lookback para encontrar a âncora do ZigZag
+    ZIGZAG_LOOKBACK_DAYS = 400  # Lookback para encontrar a âncora do ZigZag
 
 # --- FUNÇÕES DE VALIDAÇÃO (para o assistente visual) ---
 # NOTA: Estas funções não estão sendo usadas ativamente na GUI v12,

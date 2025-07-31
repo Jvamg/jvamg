@@ -18,7 +18,7 @@ class Config:
     
     TIMEFRAME_PARAMS = {
         'default': {'depth': 2, 'deviation': 2.0},
-        '1h':      {'depth': 3, 'deviation': 4.0},
+        '1h':      {'depth': 2, 'deviation': 3.0},
         '4h':      {'depth': 3, 'deviation': 5.0},
         '1d':      {'depth': 5, 'deviation': 8.0}
     }
@@ -43,7 +43,7 @@ class Config:
         'valid_ombro_direito_fraco': 5,
         'valid_perfil_volume': 5
     }
-    MINIMUM_SCORE_TO_SAVE = 100
+    MINIMUM_SCORE_TO_SAVE = 70
 
     # Parâmetros de validação
     HEAD_SIGNIFICANCE_RATIO = 1.2
