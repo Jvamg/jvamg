@@ -22,7 +22,7 @@ class Config:
         'default': {'depth': 2, 'deviation': 2.0},
         '1h':      {'depth': 2, 'deviation': 3.0},
         '4h':      {'depth': 3, 'deviation': 5.0},
-        '1d':      {'depth': 35, 'deviation': 10.0}
+        '1d':      {'depth': 30, 'deviation': 10.0}
     }
 
     # Arquivos de entrada e saída
@@ -36,6 +36,7 @@ class Config:
 # --- FUNÇÕES DE VALIDAÇÃO (para o assistente visual) ---
 # NOTA: Estas funções não estão sendo usadas ativamente na GUI v12,
 # mas são mantidas para referência ou uso futuro. A validação é lida do CSV.
+
 
 def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
     try:
@@ -86,7 +87,7 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
 
         # Pega os pivôs adjacentes para definir os períodos de volume
         p0_idx, p2_idx, p4_idx = pivots[idx_p1 -
-                                      1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
+                                        1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
 
         vol_cabeca = df.loc[p2_idx:p3_idx]['volume'].mean()
         vol_od = df.loc[p4_idx:p5_idx]['volume'].mean()
@@ -128,54 +129,62 @@ class LabelingTool(tk.Tk):
         m.pack(fill=tk.BOTH, expand=True)
         self.frame_grafico = tk.Frame(m)
         m.add(self.frame_grafico, minsize=400)
-        
+
         frame_controles = tk.Frame(m, height=150)
         frame_controles.pack_propagate(False)
         m.add(frame_controles, minsize=150)
-        
+
         # --- Usando o gerenciador GRID para layout ---
         frame_controles.grid_rowconfigure(0, weight=1)
         frame_controles.grid_columnconfigure(0, weight=1)
-        frame_controles.grid_columnconfigure(1, weight=2) # Boletim terá o dobro do espaço
+        frame_controles.grid_columnconfigure(
+            1, weight=2)  # Boletim terá o dobro do espaço
 
         # -- Frame da Esquerda --
         frame_info = tk.Frame(frame_controles)
         frame_info.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
-        
-        self.info_label = tk.Label(frame_info, text="Carregando...", font=("Segoe UI", 10), justify=tk.LEFT, anchor="nw")
+
+        self.info_label = tk.Label(frame_info, text="Carregando...", font=(
+            "Segoe UI", 10), justify=tk.LEFT, anchor="nw")
         self.info_label.pack(side=tk.TOP, anchor="w", pady=(0, 10))
-        
-        self.action_label = tk.Label(frame_info, text="Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Segoe UI", 12, "bold"))
+
+        self.action_label = tk.Label(
+            frame_info, text="Teclado: [A]provar | [R]ejeitar | [Q]uit", font=("Segoe UI", 12, "bold"))
         self.action_label.pack(side=tk.BOTTOM, anchor="w")
 
         # -- Frame da Direita (Boletim) --
-        frame_boletim = tk.Frame(frame_controles, relief=tk.RIDGE, borderwidth=1)
+        frame_boletim = tk.Frame(
+            frame_controles, relief=tk.RIDGE, borderwidth=1)
         frame_boletim.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
-        
+
         # Título
-        tk.Label(frame_boletim, text="Boletim de Validação do Padrão", font=("Segoe UI", 11, "bold")).pack(pady=(5,10))
-        
+        tk.Label(frame_boletim, text="Boletim de Validação do Padrão",
+                 font=("Segoe UI", 11, "bold")).pack(pady=(5, 10))
+
         # Frame para a grade de validações
         grid_frame = tk.Frame(frame_boletim)
         grid_frame.pack(fill=tk.BOTH, expand=True, padx=15)
-        grid_frame.grid_columnconfigure(0, weight=1) # Coluna nomes
-        grid_frame.grid_columnconfigure(1, weight=1) # Coluna status
-        
+        grid_frame.grid_columnconfigure(0, weight=1)  # Coluna nomes
+        grid_frame.grid_columnconfigure(1, weight=1)  # Coluna status
+
         self.boletim_labels = {}
-        
+
         # Cria as labels para cada regra em uma grade
         for i, (key, name) in enumerate(self.regras_map.items()):
             # Separa em duas colunas para não ficar muito longo
             col_base = 0 if i < 5 else 2
-            
-            tk.Label(grid_frame, text=f"{name}:", font=("Segoe UI", 9), anchor="w").grid(row=i % 5, column=col_base, sticky="w", padx=(0,10))
-            
-            result_label = tk.Label(grid_frame, text="...", font=("Segoe UI", 9, "bold"), anchor="w")
+
+            tk.Label(grid_frame, text=f"{name}:", font=("Segoe UI", 9), anchor="w").grid(
+                row=i % 5, column=col_base, sticky="w", padx=(0, 10))
+
+            result_label = tk.Label(grid_frame, text="...", font=(
+                "Segoe UI", 9, "bold"), anchor="w")
             result_label.grid(row=i % 5, column=col_base + 1, sticky="w")
             self.boletim_labels[key] = result_label
 
         # Label separada para o Score Final
-        self.score_label = tk.Label(frame_boletim, text="SCORE FINAL: N/A", font=("Segoe UI", 11, "bold"), fg="#1E90FF")
+        self.score_label = tk.Label(
+            frame_boletim, text="SCORE FINAL: N/A", font=("Segoe UI", 11, "bold"), fg="#1E90FF")
         self.score_label.pack(side=tk.BOTTOM, pady=5)
 
     def setup_dataframe(self, arquivo_entrada: str, arquivo_saida: str) -> bool:
@@ -227,16 +236,51 @@ class LabelingTool(tk.Tk):
         padrao_info = self.df_trabalho.loc[self.indice_atual]
         ticker, intervalo = padrao_info['ticker'], padrao_info['intervalo']
 
+        # --- ALTERAÇÃO PRINCIPAL: Cálculo de datas ANTES do download ---
+        data_inicio_padrao = pd.to_datetime(
+            padrao_info['data_inicio']).tz_localize(None)
+        data_fim_padrao = pd.to_datetime(
+            padrao_info['data_fim']).tz_localize(None)
+
+        if pd.isna(data_inicio_padrao) or pd.isna(data_fim_padrao):
+            self.marcar_e_avancar(-1)
+            return
+
+        # Define um buffer para visualização ao redor do padrão
+        duracao = data_fim_padrao - data_inicio_padrao
+        if 'm' in intervalo:
+            base_buffer = pd.Timedelta(hours=12)
+        elif '1h' in intervalo:
+            base_buffer = pd.Timedelta(days=3)
+        elif '4h' in intervalo:
+            base_buffer = pd.Timedelta(days=7)
+        else:
+            base_buffer = pd.Timedelta(days=15)
+
+        buffer_dinamico = base_buffer + (duracao * 0.75)
+
+        # Define as datas exatas para a janela de visualização
+        start_date_view = data_inicio_padrao - buffer_dinamico
+        end_date_view = data_fim_padrao + buffer_dinamico
+
+        # Define a data de início do download para incluir o lookback do ZigZag
+        # Esta é a correção chave para garantir dados suficientes para o cálculo.
+        download_start_date = start_date_view - \
+            pd.Timedelta(days=Config.ZIGZAG_LOOKBACK_DAYS)
+        # Adiciona um dia ao final para garantir que a data final seja inclusiva
+        download_end_date = end_date_view + pd.Timedelta(days=1)
+
         df_full = None
         for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
             try:
-                periodo_busca = '5y'
-                if 'm' in intervalo:
-                    periodo_busca = '60d'
-                elif 'h' in intervalo:
-                    periodo_busca = '2y'
-                df_full = yf.download(tickers=ticker, period=periodo_busca,
-                                      interval=intervalo, auto_adjust=True, progress=False)
+                # Usa start/end para um download preciso em vez de 'period'
+                df_full = yf.download(tickers=ticker,
+                                      start=download_start_date,
+                                      end=download_end_date,
+                                      interval=intervalo,
+                                      auto_adjust=True,
+                                      progress=False)
+
                 if not df_full.empty:
                     if isinstance(df_full.columns, pd.MultiIndex):
                         df_full.columns = df_full.columns.get_level_values(0)
@@ -248,42 +292,26 @@ class LabelingTool(tk.Tk):
                 if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1:
                     time.sleep(Config.RETRY_DELAY_SEGUNDOS)
                 else:
+                    # Marca como erro se o download falhar
                     self.marcar_e_avancar(-1)
                     return
 
         df_full.index = df_full.index.tz_localize(None)
-        data_inicio = pd.to_datetime(
-            padrao_info['data_inicio']).tz_localize(None)
-        data_fim = pd.to_datetime(padrao_info['data_fim']).tz_localize(None)
-        if pd.isna(data_inicio) or pd.isna(data_fim):
-            self.marcar_e_avancar(-1)
-            return
 
-        duracao = data_fim - data_inicio
-        if 'm' in intervalo: 
-            base_buffer = pd.Timedelta(hours=12)
-        elif '1h' in intervalo: 
-            base_buffer = pd.Timedelta(days=3)
-        elif '4h' in intervalo: 
-            base_buffer = pd.Timedelta(days=7)
-        else: 
-            base_buffer = pd.Timedelta(days=15)
-
-        buffer = base_buffer + (duracao * 0.75)
-
-        df_view = df_full.loc[data_inicio - buffer: data_fim + buffer].copy()
+        # Cria a janela de visualização a partir do dataframe completo já baixado
+        df_view = df_full.loc[start_date_view:end_date_view].copy()
         if df_view.empty:
+            # Marca como erro se a janela de visualização estiver vazia
             self.marcar_e_avancar(-1)
             return
 
-        data_inicio_calculo = df_view.index[0] - \
-            pd.Timedelta(days=Config.ZIGZAG_LOOKBACK_DAYS)
-        df_calculo = df_full.loc[data_inicio_calculo: df_view.index[-1]].copy()
-
+        # --- CÁLCULO DO ZIGZAG VISUAL ---
+        # Agora passamos o df_full inteiro, que contém os dados de lookback necessários.
+        # Não precisamos mais de um 'df_calculo' separado.
         params = Config.TIMEFRAME_PARAMS.get(
             intervalo, Config.TIMEFRAME_PARAMS['default'])
         pivots_visuais = self._calcular_zigzag(
-            df_calculo, params['depth'], params['deviation'])
+            df_full, params['depth'], params['deviation'])
         zigzag_line = self._preparar_zigzag_plot(pivots_visuais, df_view)
 
         # --- CÁLCULO E PREPARAÇÃO DOS INDICADORES ---
@@ -302,17 +330,18 @@ class LabelingTool(tk.Tk):
         ad_plots.extend([rsi_plot, macd_lines, macd_hist])
 
         # --- PLOTAGEM MULTI-PAINEL ---
-        self.fig, axlist = mpf.plot(df_view, type='candle', style='charles', returnfig=True, 
-                                     figsize=(13, 10), addplot=ad_plots, # Tamanho aumentado
-                                     panel_ratios=(10, 2, 2, 2), # Proporção 10 para preço, muito maior
-                                     title=f"{ticker} ({intervalo}) - Padrão {self.indice_atual}", 
-                                     volume=True, volume_panel=3,
-                                     warn_too_much_data=10000)
+        self.fig, axlist = mpf.plot(df_view, type='candle', style='charles', returnfig=True,
+                                    figsize=(13, 10), addplot=ad_plots,
+                                    panel_ratios=(10, 2, 2, 2),
+                                    title=f"{ticker} ({intervalo}) - Padrão {self.indice_atual}",
+                                    volume=True, volume_panel=3,
+                                    warn_too_much_data=10000)
 
         ax_price = axlist[0]
-        start_pos, end_pos = df_view.index.get_indexer([data_inicio], method='nearest')[
-            0], df_view.index.get_indexer([data_fim], method='nearest')[0]
+        start_pos, end_pos = df_view.index.get_indexer([data_inicio_padrao], method='nearest')[
+            0], df_view.index.get_indexer([data_fim_padrao], method='nearest')[0]
         ax_price.axvspan(start_pos, end_pos, color='yellow', alpha=0.2)
+
         if pd.notna(padrao_info['data_cabeca']):
             data_cabeca_naive = pd.to_datetime(
                 padrao_info['data_cabeca']).tz_localize(None)
@@ -321,17 +350,9 @@ class LabelingTool(tk.Tk):
             ax_price.axvline(x=head_pos, color='dodgerblue',
                              linestyle='--', linewidth=1.2)
 
-        # A chamada para a função problemática foi removida daqui.
-        # A atualização do painel agora é feita apenas por atualizar_info_label().
-
         canvas = FigureCanvasTkAgg(self.fig, master=self.frame_grafico)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-    # --- FUNÇÃO REMOVIDA ---
-    # A função 'validar_e_exibir_status' foi removida pois era redundante
-    # e causava o erro. A função 'atualizar_info_label' já lida com a
-    # atualização de todos os painéis de informação.
 
     def _calcular_zigzag(self, df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
         # ... (cópia da função 'calcular_zigzag_oficial' do gerador)
@@ -370,25 +391,60 @@ class LabelingTool(tk.Tk):
         return confirmed_pivots
 
     def _preparar_zigzag_plot(self, todos_os_pivots: List[Dict[str, Any]], df_view: pd.DataFrame) -> pd.Series:
-        # ... (cópia da função da v10.6)
-        if df_view.empty:
-            return pd.Series(dtype='float64')
-        zigzag_points = pd.Series(np.nan, index=df_view.index)
-        ponto_de_ancoragem, indice_ancora = None, -1
-        for i, pivot in enumerate(reversed(todos_os_pivots)):
+        """
+        Prepara os dados do ZigZag para plotagem de forma robusta, garantindo que a
+        série de saída tenha o mesmo tamanho da janela de visualização.
+        (v12.3 - CORREÇÃO FINAL)
+        """
+        if df_view.empty or not todos_os_pivots:
+            return pd.Series(dtype='float64', index=df_view.index)
+
+        # 1. Coletar todos os pontos-chave (âncora, pivôs, último) em um dicionário.
+        plot_points_dict = {}
+
+        # Encontra e adiciona o ponto de âncora (último pivô antes da janela)
+        ponto_de_ancoragem = None
+        for pivot in todos_os_pivots:
             if pivot['idx'] < df_view.index[0]:
-                ponto_de_ancoragem, indice_ancora = pivot, len(
-                    todos_os_pivots) - 1 - i
-                break
-        pivots_para_desenhar = todos_os_pivots[indice_ancora:] if ponto_de_ancoragem else [
-            p for p in todos_os_pivots if p['idx'] >= df_view.index[0]]
-        for p in pivots_para_desenhar:
-            if p['idx'] in zigzag_points.index:
-                zigzag_points.loc[p['idx']] = p['preco']
+                ponto_de_ancoragem = pivot
+            else:
+                break  # Pivôs são ordenados, podemos parar
+
+        if ponto_de_ancoragem:
+            plot_points_dict[ponto_de_ancoragem['idx']
+                             ] = ponto_de_ancoragem['preco']
+
+        # Adiciona os pivôs que estão dentro da área visível
+        for p in todos_os_pivots:
+            if p['idx'] in df_view.index:
+                plot_points_dict[p['idx']] = p['preco']
+
+        # Adiciona a barra final para estender a linha até o fim
         if Config.ZIGZAG_EXTEND_TO_LAST_BAR:
-            last_close, last_index = df_view['close'].iloc[-1], df_view.index[-1]
-            zigzag_points.loc[last_index] = last_close
-        return zigzag_points.interpolate(method='linear')
+            plot_points_dict[df_view.index[-1]] = df_view['close'].iloc[-1]
+
+        if not plot_points_dict:
+            return pd.Series(dtype='float64', index=df_view.index)
+
+        # 2. Criar uma série apenas com os pontos-chave.
+        points_series = pd.Series(plot_points_dict)
+
+        # 3. Alinhar a série de pontos com o índice do gráfico principal.
+        #    .reindex() expande a série para o índice completo, preenchendo com NaN.
+        #    O union() garante que o ponto de âncora (que está fora) seja incluído.
+        combined_index = df_view.index.union(points_series.index)
+        aligned_series = points_series.reindex(combined_index)
+
+        # 4. Interpolar para preencher os espaços em branco (NaNs) entre os pontos.
+        interpolated_series = aligned_series.interpolate(method='linear')
+
+        # 5. Fatiar a série para garantir que ela tenha o tamanho exato da visualização.
+        #    Isso resolve o `ValueError` de "x and y must have same first dimension".
+        #    .bfill().ffill() garante que a linha se estenda até as bordas do gráfico.
+        final_series = interpolated_series.reindex(
+            df_view.index).bfill().ffill()
+
+        return final_series
 
     def on_key_press(self, event: tk.Event):
         key = event.keysym.lower()
@@ -438,7 +494,8 @@ class LabelingTool(tk.Tk):
                 status_color = "green" if status_bool else "red"
 
                 # Atualiza a label correspondente com o texto e a cor
-                self.boletim_labels[key].config(text=status_text, fg=status_color)
+                self.boletim_labels[key].config(
+                    text=status_text, fg=status_color)
 
 
 if __name__ == '__main__':
