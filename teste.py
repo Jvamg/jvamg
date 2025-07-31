@@ -21,7 +21,7 @@ class Config:
         'default': {'depth': 2, 'deviation': 2.0},
         '1h':      {'depth': 2, 'deviation': 3.0},
         '4h':      {'depth': 3, 'deviation': 5.0},
-        '1d':      {'depth': 30, 'deviation': 10.0}
+        '1d':      {'depth': 25, 'deviation': 12.0}
     }
 
     # --- SISTEMA DE REGRAS E PONTUAÇÃO ---
@@ -48,9 +48,9 @@ class Config:
 
     # Parâmetros de validação
     HEAD_SIGNIFICANCE_RATIO = 1.2
-    SHOULDER_SYMMETRY_TOLERANCE = 0.10
+    SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
-    HEAD_EXTREME_LOOKBACK_FACTOR = 5
+    HEAD_EXTREME_LOOKBACK_FACTOR = 2
 
     MAX_DOWNLOAD_TENTATIVAS, RETRY_DELAY_SEGUNDOS = 3, 5
     OUTPUT_DIR = 'data/datasets_hns_scored_mandatory'
@@ -246,9 +246,16 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, tipo_padrao, df_histo
         return None
 
     # Regra 5: O padrão deve emergir de uma tendência anterior clara
-    details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or \
-                                      (tipo_padrao == 'OCOI' and p0['preco'] >
-                                       neckline1['preco'] and p0['preco'] > neckline2['preco'])
+    details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and (
+        (p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or
+        (abs(p0['preco'] - neckline1['preco']) < p0['preco'] *
+         0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)
+    )) or \
+        (tipo_padrao == 'OCOI' and (
+            (p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or
+            (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(
+                p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)
+        ))
     if not details['valid_base_tendencia']:
         return None
 
