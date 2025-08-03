@@ -41,7 +41,8 @@ class Config:
         'macro_trend': {
             '1d': {'depth': 15, 'deviation': 10.0},
             '1wk': {'depth': 10, 'deviation': 15.0},
-            '1mo': {'depth': 5,  'deviation': 20.0} # Cuidado com '1M', pode ter poucos dados
+            # Cuidado com '1M', pode ter poucos dados
+            '1mo': {'depth': 5,  'deviation': 20.0}
         },
         # 5. Foco em estruturas principais de longo prazo com filtro máximo.
         'major_structure': {
@@ -56,7 +57,7 @@ class Config:
         # Regras obrigatórias
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
         'valid_simetria_ombros': 10, 'valid_neckline_plana': 5,
-        'valid_base_tendencia': 5, 
+        'valid_base_tendencia': 5,
         # Regras opicionais
         'valid_divergencia_rsi': 15,
         'valid_divergencia_macd': 10, 'valid_proeminencia_cabeca': 10,
@@ -65,7 +66,7 @@ class Config:
     MINIMUM_SCORE_TO_SAVE = 70
 
     # Parâmetros de validação (Sem alterações)
-    HEAD_SIGNIFICANCE_RATIO = 1.2
+    HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
     HEAD_EXTREME_LOOKBACK_FACTOR = 2
@@ -82,24 +83,25 @@ class Config:
 # identificar_padroes_hns continuam exatamente as mesmas.
 # O código delas não precisa mudar, pois elas recebem os parâmetros que precisam.
 
+
 def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
     """
     Busca dados históricos ajustando o período solicitado para respeitar
     os limites da API do Yahoo Finance.
     """
     original_period = period
-    
+
     # <<< CORREÇÃO: Respeitando os limites da API do yfinance >>>
     # A API do Yahoo Finance permite buscar no máximo 7-8 dias de dados
     # quando a granularidade (interval) é em minutos.
     if 'm' in interval:
-        period = '7d' # Alterado de '60d' para '7d'
+        period = '7d'  # Alterado de '60d' para '7d'
     elif 'h' in interval:
         period = '2y'
-        
+
     if period != original_period:
         print(f"{Fore.YELLOW}Aviso: Período padrão '{original_period}' ajustado para '{period}' para o intervalo '{interval}' para respeitar limites da API.{Style.RESET_ALL}")
-        
+
     for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
         try:
             df = yf.download(tickers=ticker, period=period,
@@ -113,13 +115,14 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
                 raise ValueError("Download retornou um DataFrame vazio.")
         except Exception as e:
             if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1:
-                print(f"{Fore.YELLOW}Tentativa {tentativa + 1} falhou. Tentando novamente em {Config.RETRY_DELAY_SEGUNDOS}s...{Style.RESET_ALL}")
+                print(
+                    f"{Fore.YELLOW}Tentativa {tentativa + 1} falhou. Tentando novamente em {Config.RETRY_DELAY_SEGUNDOS}s...{Style.RESET_ALL}")
                 time.sleep(Config.RETRY_DELAY_SEGUNDOS)
             else:
                 # Lança uma exceção mais específica para ser capturada no loop principal
                 raise ConnectionError(
                     f"Download falhou para {ticker}/{interval} após {Config.MAX_DOWNLOAD_TENTATIVAS} tentativas. Erro: {e}")
-    
+
     # Este ponto não deveria ser alcançado, mas é uma boa prática ter um fallback.
     raise ConnectionError(
         f"Falha inesperada no download para {ticker}/{interval}.")
@@ -225,7 +228,7 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
         if any(i is None for i in [idx_p1, idx_p3, idx_p5]) or idx_p1 < 2:
             return False
         p0_idx, p2_idx, p4_idx = pivots[idx_p1 -
-                                      1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
+                                        1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
         vol_cabeca = df.loc[p2_idx:p3_idx]['volume'].mean()
         vol_od = df.loc[p4_idx:p5_idx]['volume'].mean()
         return vol_cabeca > vol_od
@@ -279,7 +282,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, tipo_padrao, df_histo
     for rule, passed in details.items():
         if passed:
             score += Config.SCORE_WEIGHTS.get(rule, 0)
-    if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO):
+    if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
         details['valid_proeminencia_cabeca'] = True
         score += Config.SCORE_WEIGHTS['valid_proeminencia_cabeca']
     if check_rsi_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
@@ -345,7 +348,8 @@ def main():
         print(f"\n{Style.BRIGHT}===== ESTRATÉGIA: {strategy_name.upper()} =====")
         for interval, params in intervals_config.items():
             for ticker in Config.TICKERS:
-                print(f"\n--- Processando: {ticker} | Intervalo: {interval} (Estratégia: {strategy_name}) ---")
+                print(
+                    f"\n--- Processando: {ticker} | Intervalo: {interval} (Estratégia: {strategy_name}) ---")
                 try:
                     df_historico = buscar_dados(
                         ticker, Config.DATA_PERIOD, interval)
@@ -356,7 +360,8 @@ def main():
                         df_historico, params['depth'], params['deviation'])
 
                     if len(pivots_detectados) < 7:
-                        print("ℹ️ Número insuficiente de pivôs para formar um padrão.")
+                        print(
+                            "ℹ️ Número insuficiente de pivôs para formar um padrão.")
                         continue
 
                     print("Identificando padrões H&S com regras obrigatórias...")
@@ -376,7 +381,8 @@ def main():
                         print(
                             "ℹ️ Nenhum padrão passou nos critérios obrigatórios ou atingiu a pontuação mínima.")
                 except Exception as e:
-                    print(f"{Fore.RED}❌ Erro ao processar {ticker}/{interval} na estratégia {strategy_name}: {e}")
+                    print(
+                        f"{Fore.RED}❌ Erro ao processar {ticker}/{interval} na estratégia {strategy_name}: {e}")
 
     print(
         f"\n{Style.BRIGHT}--- Processo finalizado. Salvando dataset... ---{Style.RESET_ALL}")
@@ -386,22 +392,24 @@ def main():
         return
 
     df_final = pd.DataFrame(todos_os_padroes_finais)
-    
+
     # <<< ALTERAÇÃO 5: Inclui 'strategy' na chave de identificação de duplicatas >>>
     df_final.drop_duplicates(subset=[
         'ticker', 'timeframe', 'strategy', 'padrao_tipo', 'cabeca_idx'], inplace=True, keep='first')
 
     # <<< ALTERAÇÃO 6: Adiciona 'strategy' nas colunas de informação >>>
-    cols_info = ['ticker', 'timeframe', 'strategy', 'padrao_tipo', 'score_total']
+    cols_info = ['ticker', 'timeframe',
+                 'strategy', 'padrao_tipo', 'score_total']
     cols_validacao = sorted(
         [col for col in df_final.columns if col.startswith('valid_')])
     cols_pontos = [
         col for col in df_final.columns if col.endswith(('_idx', '_preco'))]
-    
+
     # Garante que todas as colunas existentes sejam incluídas
     existing_cols = set(df_final.columns)
-    ordem_final = [c for c in (cols_info + cols_validacao + cols_pontos) if c in existing_cols]
-    
+    ordem_final = [c for c in (
+        cols_info + cols_validacao + cols_pontos) if c in existing_cols]
+
     df_final = df_final.reindex(columns=ordem_final)
 
     df_final.to_csv(Config.FINAL_CSV_PATH, index=False,
