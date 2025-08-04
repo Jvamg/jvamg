@@ -13,7 +13,34 @@ init(autoreset=True)
 
 
 class Config:
-    TICKERS = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'HBAR-USD']
+    TICKERS = [
+        'BTC-USD',   # 
+        'ETH-USD',   # 
+        'SOL-USD',   # 
+        'XRP-USD',   # 
+        'BNB-USD',   # 
+        'ADA-USD',   # 
+        'DOGE-USD',  # 
+        'AVAX-USD',  # 
+        'LINK-USD',  # 
+        'DOT-USD',   # 
+        'TRX-USD',   #  
+        'LTC-USD',   # 
+        'BCH-USD',   # 
+        'SHIB-USD',  # 
+        'ICP-USD',   # 
+        'ETC-USD',   # 
+        'XLM-USD',   # 
+        'NEAR-USD',  # 
+        'ATOM-USD',  # 
+        'VET-USD',   # 
+        'FTM-USD',   # 
+        'AAVE-USD',  # 
+        'MKR-USD',   # 
+        'ALGO-USD',  # 
+        'FIL-USD',   # 
+        'HBAR-USD',  # 
+    ]
     DATA_PERIOD = '5y'
 
     # <<< ALTERAÇÃO 1: ZIGZAG_STRATEGIES agora é a fonte da verdade >>>
@@ -58,18 +85,20 @@ class Config:
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
         'valid_simetria_ombros': 10, 'valid_neckline_plana': 5,
         'valid_base_tendencia': 5,
+        'valid_neckline_retest_p6': 15, 
         # Regras opicionais
         'valid_divergencia_rsi': 15,
         'valid_divergencia_macd': 10, 'valid_proeminencia_cabeca': 10,
         'valid_ombro_direito_fraco': 5, 'valid_perfil_volume': 5
     }
-    MINIMUM_SCORE_TO_SAVE = 70
+    MINIMUM_SCORE_TO_SAVE = 80
 
     # Parâmetros de validação (Sem alterações)
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
     HEAD_EXTREME_LOOKBACK_FACTOR = 2
+    NECKLINE_RETEST_TOLERANCE = 0.02 
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
 
@@ -262,51 +291,74 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
     return False
 
 
-def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, tipo_padrao, df_historico, pivots, avg_pivot_dist_days):
-    # ... (código idêntico)
+### MUDANÇA 6: Atualizar a assinatura da função para receber p6 ###
+def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_days):
     details = {key: False for key in Config.SCORE_WEIGHTS.keys()}
     ombro_esq, neckline1, cabeca, neckline2, ombro_dir = p1, p2, p3, p4, p5
+
+    # --- Lógica de validação original (sem alterações) ---
     altura_cabeca = abs(
         cabeca['preco'] - np.mean([neckline1['preco'], neckline2['preco']]))
     altura_ombro_esq = abs(
         ombro_esq['preco'] - np.mean([neckline1['preco'], neckline2['preco']]))
     altura_ombro_dir = abs(
         ombro_dir['preco'] - np.mean([neckline1['preco'], neckline2['preco']]))
+
     details['valid_extremo_cabeca'] = (tipo_padrao == 'OCO' and cabeca['preco'] > ombro_esq['preco'] and cabeca['preco'] > ombro_dir['preco']) or \
-                                      (tipo_padrao == 'OCOI' and cabeca['preco'] <
-                                       ombro_esq['preco'] and cabeca['preco'] < ombro_dir['preco'])
+                                      (tipo_padrao == 'OCOI' and cabeca['preco'] < ombro_esq['preco'] and cabeca['preco'] < ombro_dir['preco'])
     if not details['valid_extremo_cabeca']:
         return None
+    
     details['valid_contexto_cabeca'] = is_head_extreme(
         df_historico, cabeca, avg_pivot_dist_days)
     if not details['valid_contexto_cabeca']:
         return None
+
     details['valid_simetria_ombros'] = altura_cabeca > 0 and \
-        abs(altura_ombro_esq - altura_ombro_dir) <= altura_cabeca * \
-        Config.SHOULDER_SYMMETRY_TOLERANCE
+        abs(altura_ombro_esq - altura_ombro_dir) <= altura_cabeca * Config.SHOULDER_SYMMETRY_TOLERANCE
     if not details['valid_simetria_ombros']:
         return None
+
     details['valid_neckline_plana'] = altura_ombro_esq > 0 and \
-        abs(neckline1['preco'] - neckline2['preco']
-            ) <= altura_ombro_esq * Config.NECKLINE_FLATNESS_TOLERANCE
+        abs(neckline1['preco'] - neckline2['preco']) <= altura_ombro_esq * Config.NECKLINE_FLATNESS_TOLERANCE
     if not details['valid_neckline_plana']:
         return None
-    details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and (
-        (p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or
-        (abs(p0['preco'] - neckline1['preco']) < p0['preco'] *
-         0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)
-    )) or \
-        (tipo_padrao == 'OCOI' and (
-            (p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or
-            (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(
-                p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)
-        ))
+
+    details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and ((p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05))) or \
+                                      (tipo_padrao == 'OCOI' and ((p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)))
     if not details['valid_base_tendencia']:
         return None
+
+    ### MUDANÇA 7: Implementar a nova lógica de validação para o pivô p6 ###
+    # Calcular o preço médio da neckline
+    neckline_price = np.mean([neckline1['preco'], neckline2['preco']])
+    
+    # Calcular a variação máxima permitida com base na tolerância
+    max_variation = neckline_price * Config.NECKLINE_RETEST_TOLERANCE
+    
+    # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
+    is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
+
+    # Verificar se o p6 não rompeu a neckline
+    # Para OCO (neckline é suporte), p6 (vale) não pode fechar abaixo.
+    # Para OCOI (neckline é resistência), p6 (pico) não pode fechar acima.
+    if tipo_padrao == 'OCO' and p6['preco'] >= neckline_price and is_close_to_neckline:
+        details['valid_neckline_retest_p6'] = True
+    elif tipo_padrao == 'OCOI' and p6['preco'] <= neckline_price and is_close_to_neckline:
+        details['valid_neckline_retest_p6'] = True
+    
+    # Se o reteste do p6 for a regra principal, tornamo-la eliminatória
+    if not details['valid_neckline_retest_p6']:
+        return None
+    # --- Fim da nova lógica ---
+
+    # --- Lógica de pontuação (com a nova regra já adicionada aos "details") ---
     score = 0
     for rule, passed in details.items():
         if passed:
             score += Config.SCORE_WEIGHTS.get(rule, 0)
+
+    # ... (Resto da lógica de pontuação opcional permanece a mesma) ...
     if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
         details['valid_proeminencia_cabeca'] = True
         score += Config.SCORE_WEIGHTS['valid_proeminencia_cabeca']
@@ -323,6 +375,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, tipo_padrao, df_histo
     if check_volume_profile(df_historico, pivots, p1['idx'], p3['idx'], p5['idx']):
         details['valid_perfil_volume'] = True
         score += Config.SCORE_WEIGHTS['valid_perfil_volume']
+
     if score >= Config.MINIMUM_SCORE_TO_SAVE:
         base_data = {
             'padrao_tipo': tipo_padrao, 'score_total': score,
@@ -331,10 +384,13 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, tipo_padrao, df_histo
             'neckline1_idx': p2['idx'], 'neckline1_preco': p2['preco'],
             'cabeca_idx': p3['idx'], 'cabeca_preco': p3['preco'],
             'neckline2_idx': p4['idx'], 'neckline2_preco': p4['preco'],
-            'ombro2_idx': p5['idx'], 'ombro2_preco': p5['preco']
+            'ombro2_idx': p5['idx'], 'ombro2_preco': p5['preco'],
+            ### MUDANÇA 8: Adicionar os dados de p6 ao resultado final ###
+            'retest_p6_idx': p6['idx'], 'retest_p6_preco': p6['preco']
         }
         base_data.update(details)
         return base_data
+        
     return None
 
 

@@ -6,8 +6,10 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from agno.tools.webtools import WebTools
 from agno.storage.sqlite import SqliteStorage
+from agno.playground import Playground
+from agno.tools.googlesearch import GoogleSearchTools
+
 
 agent_storage: str = "tmp/agents.db"
 
@@ -21,7 +23,7 @@ reasoning_agent = Agent(
             company_info=True,
             company_news=True
         ),
-        WebTools()
+        GoogleSearchTools()
     ],
     instructions="search in web tickers to the stock or coin name",
     storage=SqliteStorage(table_name="web_agent", db_file=agent_storage),
@@ -31,23 +33,8 @@ reasoning_agent = Agent(
     markdown=True,
 )
 
+playground_app = Playground(agents=[reasoning_agent])
+app = playground_app.get_app()
+
 if __name__ == "__main__":
-    print("--- Agente com Acesso à Web ---")
-    print("Digite uma pergunta ou 'sair' para terminar.\n")
-
-    while True:
-        try:
-            user_input = input("Você: ")
-            if user_input.lower() == 'sair':
-                print("Encerrando...")
-                break
-            
-            print("Agente está pensando...")
-            response = reasoning_agent.run(user_input)
-            
-            print("\n--- Resposta do Agente ---")
-            print(response.content)
-            print("--------------------------\n")
-
-        except Exception as e:
-            print(f"Ocorreu um erro: {e}")
+    playground_app.serve("app:app", reload=True)
