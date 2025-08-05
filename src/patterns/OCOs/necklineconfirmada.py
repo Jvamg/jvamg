@@ -14,32 +14,57 @@ init(autoreset=True)
 
 class Config:
     TICKERS = [
-        'BTC-USD',   # 
-        'ETH-USD',   # 
-        'SOL-USD',   # 
-        'XRP-USD',   # 
-        'BNB-USD',   # 
-        'ADA-USD',   # 
-        'DOGE-USD',  # 
-        'AVAX-USD',  # 
-        'LINK-USD',  # 
-        'DOT-USD',   # 
-        'TRX-USD',   #  
-        'LTC-USD',   # 
-        'BCH-USD',   # 
-        'SHIB-USD',  # 
-        'ICP-USD',   # 
-        'ETC-USD',   # 
-        'XLM-USD',   # 
-        'NEAR-USD',  # 
-        'ATOM-USD',  # 
-        'VET-USD',   # 
-        'FTM-USD',   # 
-        'AAVE-USD',  # 
-        'MKR-USD',   # 
-        'ALGO-USD',  # 
-        'FIL-USD',   # 
-        'HBAR-USD',  # 
+        'AAVE-USD',   # Aave
+        'ADA-USD',    # Cardano
+        'ALGO-USD',   # Algorand
+        'APE-USD',    # ApeCoin
+        'ARB-USD',    # Arbitrum
+        'ATOM-USD',   # Cosmos
+        'AVAX-USD',   # Avalanche
+        'AXS-USD',    # Axie Infinity
+        'BCH-USD',    # Bitcoin Cash
+        'BNB-USD',    # BNB
+        'BTC-USD',    # Bitcoin
+        'BSV-USD',    # Bitcoin SV
+        'CHZ-USD',    # Chiliz
+        'CRO-USD',    # Cronos
+        'DOGE-USD',   # Dogecoin
+        'DOT-USD',    # Polkadot
+        'EGLD-USD',   # MultiversX
+        'EOS-USD',    # EOS
+        'ETC-USD',    # Ethereum Classic
+        'ETH-USD',    # Ethereum
+        'FIL-USD',    # Filecoin
+        'FLOW-USD',   # Flow
+        'HBAR-USD',   # Hedera
+        'ICP-USD',    # Internet Computer
+        'INJ-USD',    # Injective
+        'LDO-USD',    # Lido DAO
+        'LINK-USD',   # Chainlink
+        'LTC-USD',    # Litecoin
+        'MANA-USD',   # Decentraland
+        'MKR-USD',    # Maker
+        'NEAR-USD',   # NEAR Protocol
+        'NEO-USD',    # Neo
+        'OP-USD',     # Optimism
+        'QNT-USD',    # Quant
+        'RUNE-USD',   # THORChain
+        'SAND-USD',   # The Sandbox
+        'SHIB-USD',   # Shiba Inu
+        'SNX-USD',    # Synthetix
+        'SOL-USD',    # Solana
+        'THETA-USD',  # Theta Network
+        'TON-USD',    # Toncoin
+        'TRX-USD',    # TRON
+        'TWT-USD',    # Trust Wallet Token
+        'VET-USD',    # VeChain
+        'WLD-USD',    # Worldcoin
+        'XLM-USD',    # Stellar
+        'XMR-USD',    # Monero
+        'XRP-USD',    # XRP
+        'XTZ-USD',    # Tezos
+        'ZEC-USD',    # Zcash
+        'ZIL-USD',    # Zilliqa
     ]
     DATA_PERIOD = '5y'
 
@@ -85,22 +110,22 @@ class Config:
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
         'valid_simetria_ombros': 10, 'valid_neckline_plana': 5,
         'valid_base_tendencia': 5,
-        'valid_neckline_retest_p6': 15, 
+        'valid_neckline_retest_p6': 15,
         # Regras opicionais
         'valid_divergencia_rsi': 15,
         'valid_divergencia_macd': 10, 'valid_proeminencia_cabeca': 10,
         'valid_ombro_direito_fraco': 5, 'valid_perfil_volume': 5
     }
-    MINIMUM_SCORE_TO_SAVE = 80
+    MINIMUM_SCORE_TO_SAVE = 70
 
     # Parâmetros de validação (Sem alterações)
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
     HEAD_EXTREME_LOOKBACK_FACTOR = 2
-    NECKLINE_RETEST_TOLERANCE = 0.02 
+    NECKLINE_RETEST_TOLERANCE = 0.02
 
-    RECENT_PATTERNS_LOOKBACK_COUNT = 1
+    RECENT_PATTERNS_LOOKBACK_COUNT = 2
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
@@ -127,7 +152,9 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
     # <<< CORREÇÃO: Respeitando os limites da API do yfinance >>>
     # A API do Yahoo Finance permite buscar no máximo 7-8 dias de dados
     # quando a granularidade (interval) é em minutos.
-    if 'm' in interval:
+    if 'mo' in interval:
+        period = 'max'
+    elif 'm' in interval:
         period = '7d'  # Alterado de '60d' para '7d'
     elif 'h' in interval:
         period = '2y'
@@ -198,23 +225,23 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
     if Config.ZIGZAG_EXTEND_TO_LAST_BAR and confirmed_pivots:
         last_confirmed_pivot = confirmed_pivots[-1]
         last_bar = df.iloc[-1]
-        
+
         # Cria um pivô potencial no último candle disponível
         potential_pivot = {
             'idx': df.index[-1],
             # Se o último pivô foi um VALE, o próximo é um PICO potencial, e vice-versa.
             'tipo': 'PICO' if last_confirmed_pivot['tipo'] == 'VALE' else 'VALE'
         }
-        
+
         # Usa o preço da máxima ou mínima do último candle
         if potential_pivot['tipo'] == 'PICO':
             potential_pivot['preco'] = last_bar['high']
         else:
             potential_pivot['preco'] = last_bar['low']
-            
+
         # Adiciona o pivô potencial à lista se for diferente do último confirmado
         if potential_pivot['idx'] != last_confirmed_pivot['idx']:
-             confirmed_pivots.append(potential_pivot)
+            confirmed_pivots.append(potential_pivot)
 
     return confirmed_pivots
 
@@ -305,48 +332,52 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
         ombro_dir['preco'] - np.mean([neckline1['preco'], neckline2['preco']]))
 
     details['valid_extremo_cabeca'] = (tipo_padrao == 'OCO' and cabeca['preco'] > ombro_esq['preco'] and cabeca['preco'] > ombro_dir['preco']) or \
-                                      (tipo_padrao == 'OCOI' and cabeca['preco'] < ombro_esq['preco'] and cabeca['preco'] < ombro_dir['preco'])
+                                      (tipo_padrao == 'OCOI' and cabeca['preco'] <
+                                       ombro_esq['preco'] and cabeca['preco'] < ombro_dir['preco'])
     if not details['valid_extremo_cabeca']:
         return None
-    
+
     details['valid_contexto_cabeca'] = is_head_extreme(
         df_historico, cabeca, avg_pivot_dist_days)
     if not details['valid_contexto_cabeca']:
         return None
 
     details['valid_simetria_ombros'] = altura_cabeca > 0 and \
-        abs(altura_ombro_esq - altura_ombro_dir) <= altura_cabeca * Config.SHOULDER_SYMMETRY_TOLERANCE
+        abs(altura_ombro_esq - altura_ombro_dir) <= altura_cabeca * \
+        Config.SHOULDER_SYMMETRY_TOLERANCE
     if not details['valid_simetria_ombros']:
         return None
 
     details['valid_neckline_plana'] = altura_ombro_esq > 0 and \
-        abs(neckline1['preco'] - neckline2['preco']) <= altura_ombro_esq * Config.NECKLINE_FLATNESS_TOLERANCE
+        abs(neckline1['preco'] - neckline2['preco']
+            ) <= altura_ombro_esq * Config.NECKLINE_FLATNESS_TOLERANCE
     if not details['valid_neckline_plana']:
         return None
 
     details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and ((p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05))) or \
-                                      (tipo_padrao == 'OCOI' and ((p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)))
+                                      (tipo_padrao == 'OCOI' and ((p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or (abs(
+                                          p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)))
     if not details['valid_base_tendencia']:
         return None
 
     ### MUDANÇA 7: Implementar a nova lógica de validação para o pivô p6 ###
     # Calcular o preço médio da neckline
     neckline_price = np.mean([neckline1['preco'], neckline2['preco']])
-    
+
     # Calcular a variação máxima permitida com base na tolerância
     max_variation = neckline_price * Config.NECKLINE_RETEST_TOLERANCE
-    
+
     # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
     is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
 
     # Verificar se o p6 não rompeu a neckline
     # Para OCO (neckline é suporte), p6 (vale) não pode fechar abaixo.
     # Para OCOI (neckline é resistência), p6 (pico) não pode fechar acima.
-    if tipo_padrao == 'OCO' and p6['preco'] >= neckline_price and is_close_to_neckline:
-        details['valid_neckline_retest_p6'] = True
-    elif tipo_padrao == 'OCOI' and p6['preco'] <= neckline_price and is_close_to_neckline:
-        details['valid_neckline_retest_p6'] = True
-    
+    # if tipo_padrao == 'OCO' and p6['preco'] >= neckline_price and is_close_to_neckline:
+    #    details['valid_neckline_retest_p6'] = True
+    # elif tipo_padrao == 'OCOI' and p6['preco'] <= neckline_price and is_close_to_neckline:
+    #    details['valid_neckline_retest_p6'] = True
+
     # Se o reteste do p6 for a regra principal, tornamo-la eliminatória
     if not details['valid_neckline_retest_p6']:
         return None
@@ -390,7 +421,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
         }
         base_data.update(details)
         return base_data
-        
+
     return None
 
 
@@ -403,8 +434,9 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     avg_pivot_dist_days = np.mean(
         [(pivots[i]['idx'] - pivots[i-1]['idx']).days for i in range(1, n)]) if n > 1 else 0
     start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
-    
-    print(f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} pivôs finais possíveis (a partir do índice {start_index}).")
+
+    print(
+        f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} pivôs finais possíveis (a partir do índice {start_index}).")
 
     for i in range(start_index, n - 6):
         janela = pivots[i:i+7]
@@ -428,7 +460,7 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
                 p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_days)
             if dados_padrao:
                 padroes_encontrados.append(dados_padrao)
-                
+
     return padroes_encontrados
 
 

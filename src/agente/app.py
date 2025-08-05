@@ -1,14 +1,14 @@
 # 1. Adicione estas duas linhas no topo de tudo
+from agno.tools.googlesearch import GoogleSearchTools
+from currency_converter import CurrencyConverterTools
+from agno.playground import Playground
+from agno.storage.sqlite import SqliteStorage
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.reasoning import ReasoningTools
+from agno.models.google import Gemini
+from agno.agent import Agent
 from dotenv import load_dotenv
 load_dotenv()
-
-from agno.agent import Agent
-from agno.models.google import Gemini
-from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
-from agno.storage.sqlite import SqliteStorage
-from agno.playground import Playground
-from agno.tools.googlesearch import GoogleSearchTools
 
 
 agent_storage: str = "tmp/agents.db"
@@ -23,9 +23,10 @@ reasoning_agent = Agent(
             company_info=True,
             company_news=True
         ),
-        GoogleSearchTools()
+        GoogleSearchTools(),
+        CurrencyConverterTools()
     ],
-    instructions="search in web tickers to the stock or coin name",
+    instructions="search in web to get tickers to the stock or coin name to use in get_current_stock_price, if necessary, use convert_usd_to_other to convert the amount to the target currency",
     storage=SqliteStorage(table_name="web_agent", db_file=agent_storage),
     add_datetime_to_instructions=True,
     add_history_to_messages=True,

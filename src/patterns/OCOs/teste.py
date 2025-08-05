@@ -169,23 +169,23 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
     if Config.ZIGZAG_EXTEND_TO_LAST_BAR and confirmed_pivots:
         last_confirmed_pivot = confirmed_pivots[-1]
         last_bar = df.iloc[-1]
-        
+
         # Cria um pivô potencial no último candle disponível
         potential_pivot = {
             'idx': df.index[-1],
             # Se o último pivô foi um VALE, o próximo é um PICO potencial, e vice-versa.
             'tipo': 'PICO' if last_confirmed_pivot['tipo'] == 'VALE' else 'VALE'
         }
-        
+
         # Usa o preço da máxima ou mínima do último candle
         if potential_pivot['tipo'] == 'PICO':
             potential_pivot['preco'] = last_bar['high']
         else:
             potential_pivot['preco'] = last_bar['low']
-            
+
         # Adiciona o pivô potencial à lista se for diferente do último confirmado
         if potential_pivot['idx'] != last_confirmed_pivot['idx']:
-             confirmed_pivots.append(potential_pivot)
+            confirmed_pivots.append(potential_pivot)
 
     return confirmed_pivots
 
@@ -347,32 +347,31 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     avg_pivot_dist_days = np.mean(
         [(pivots[i]['idx'] - pivots[i-1]['idx']).days for i in range(1, n)]) if n > 1 else 0
     start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
-    
-    print(f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} pivôs finais possíveis (a partir do índice {start_index}).")
+
+    print(
+        f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} pivôs finais possíveis (a partir do índice {start_index}).")
 
     for i in range(start_index, n - 6):
         janela = pivots[i:i+7]
         # O resto da função continua exatamente igual
         p0, p1, p2, p3, p4, p5 = janela[0], janela[1], janela[2], janela[3], janela[4], janela[5]
-        ### MUDANÇA 4: Capturar o pivô p6 para o reteste ###
-        p6 = janela[6]
 
         tipo_padrao = None
         # Verifica se a janela corresponde a um padrão OCO
         # A sequência de tipos de pivô continua a mesma, pois p6 é o reteste
-        if all(p['tipo'] == t for p, t in zip(janela, ['VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE'])):
+        if all(p['tipo'] == t for p, t in zip(janela, ['VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO'])):
             tipo_padrao = 'OCO'
         # Verifica se a janela corresponde a um padrão OCOI
-        elif all(p['tipo'] == t for p, t in zip(janela, ['PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO'])):
+        elif all(p['tipo'] == t for p, t in zip(janela, ['PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE'])):
             tipo_padrao = 'OCOI'
 
         if tipo_padrao:
             ### MUDANÇA 5: Passar p6 para a função de validação ###
             dados_padrao = validate_and_score_hns_pattern(
-                p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_days)
+                p0, p1, p2, p3, p4, p5, tipo_padrao, df_historico, pivots, avg_pivot_dist_days)
             if dados_padrao:
                 padroes_encontrados.append(dados_padrao)
-                
+
     return padroes_encontrados
 
 
