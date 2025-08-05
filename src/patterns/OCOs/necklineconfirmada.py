@@ -17,11 +17,7 @@ class Config:
         'AAVE-USD',   # Aave
         'ADA-USD',    # Cardano
         'ALGO-USD',   # Algorand
-        'APE-USD',    # ApeCoin
-        'ARB-USD',    # Arbitrum
-        'ATOM-USD',   # Cosmos
         'AVAX-USD',   # Avalanche
-        'AXS-USD',    # Axie Infinity
         'BCH-USD',    # Bitcoin Cash
         'BNB-USD',    # BNB
         'BTC-USD',    # Bitcoin
@@ -38,7 +34,6 @@ class Config:
         'FLOW-USD',   # Flow
         'HBAR-USD',   # Hedera
         'ICP-USD',    # Internet Computer
-        'INJ-USD',    # Injective
         'LDO-USD',    # Lido DAO
         'LINK-USD',   # Chainlink
         'LTC-USD',    # Litecoin
@@ -48,22 +43,17 @@ class Config:
         'NEO-USD',    # Neo
         'OP-USD',     # Optimism
         'QNT-USD',    # Quant
-        'RUNE-USD',   # THORChain
-        'SAND-USD',   # The Sandbox
         'SHIB-USD',   # Shiba Inu
         'SNX-USD',    # Synthetix
         'SOL-USD',    # Solana
         'THETA-USD',  # Theta Network
-        'TON-USD',    # Toncoin
         'TRX-USD',    # TRON
         'TWT-USD',    # Trust Wallet Token
         'VET-USD',    # VeChain
-        'WLD-USD',    # Worldcoin
         'XLM-USD',    # Stellar
         'XMR-USD',    # Monero
         'XRP-USD',    # XRP
         'XTZ-USD',    # Tezos
-        'ZEC-USD',    # Zcash
         'ZIL-USD',    # Zilliqa
     ]
     DATA_PERIOD = '5y'
@@ -123,9 +113,8 @@ class Config:
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
     HEAD_EXTREME_LOOKBACK_FACTOR = 2
-    NECKLINE_RETEST_TOLERANCE = 0.02
 
-    RECENT_PATTERNS_LOOKBACK_COUNT = 2
+    RECENT_PATTERNS_LOOKBACK_COUNT = 1
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
@@ -364,19 +353,28 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     # Calcular o preço médio da neckline
     neckline_price = np.mean([neckline1['preco'], neckline2['preco']])
 
-    # Calcular a variação máxima permitida com base na tolerância
-    max_variation = neckline_price * Config.NECKLINE_RETEST_TOLERANCE
+    # --- Tolerância adaptativa baseada no ATR ---
+    # Calcula ATR(14) utilizando pandas_ta
+    atr_series = df_historico.ta.atr(length=14)
+    # Procura o ATR no índice do p6; se não houver valor, usa o último ATR disponível
+    if p6['idx'] in atr_series.index and not np.isnan(atr_series.loc[p6['idx']]):
+        atr_val = atr_series.loc[p6['idx']]
+    else:
+        atr_val = atr_series.dropna(
+        ).iloc[-1] if not atr_series.dropna().empty else 0
+
+    # Percentual de tolerância: 25 % do ATR relativo ao preço da neckline
+    # com piso absoluto de 0,3 % para evitar valores demasiadamente pequenos
+    tol_pct = 0.4 * atr_val / neckline_price if neckline_price else 0
+    tol_pct = max(tol_pct, 0.003)  # mínimo de 0,3 %
+
+    max_variation = neckline_price * tol_pct
 
     # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
     is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
 
-    # Verificar se o p6 não rompeu a neckline
-    # Para OCO (neckline é suporte), p6 (vale) não pode fechar abaixo.
-    # Para OCOI (neckline é resistência), p6 (pico) não pode fechar acima.
-    # if tipo_padrao == 'OCO' and p6['preco'] >= neckline_price and is_close_to_neckline:
-    #    details['valid_neckline_retest_p6'] = True
-    # elif tipo_padrao == 'OCOI' and p6['preco'] <= neckline_price and is_close_to_neckline:
-    #    details['valid_neckline_retest_p6'] = True
+    # Registra o resultado da validação
+    details['valid_neckline_retest_p6'] = is_close_to_neckline
 
     # Se o reteste do p6 for a regra principal, tornamo-la eliminatória
     if not details['valid_neckline_retest_p6']:
