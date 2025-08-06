@@ -28,31 +28,57 @@ class Config:
     # em contagem de candles é mais direta e eficaz, tornando a antiga obsoleta.
 
     ZIGZAG_STRATEGIES = {
-        'micro_structure': {
-            '1m':  {'depth': 3, 'deviation': 0.2},
-            '5m':  {'depth': 4, 'deviation': 0.6},
-            '15m': {'depth': 5, 'deviation': 0.8}
+        # ------- SCALPING (micro-estruturas) ----------
+        'scalping_aggressive': {
+            '5m':  {'depth': 3, 'deviation': 0.25}
         },
-        'day_trade': {
-            '15m': {'depth': 7,  'deviation': 1.0},
-            '1h':  {'depth': 8,  'deviation': 1.5},
-            '4h':  {'depth': 10, 'deviation': 2.5}
+        'scalping_moderate': {
+            '5m':  {'depth': 4, 'deviation': 0.40},
+            '15m': {'depth': 5, 'deviation': 0.60}
         },
-        # ... resto das estratégias sem alteração
-        'swing_structure': {
-            '4h': {'depth': 12, 'deviation': 4.0},
-            '1d': {'depth': 8,  'deviation': 6.0},
-            '1wk': {'depth': 5,  'deviation': 8.0}
+        'scalping_conservative': {
+            '5m':  {'depth': 5, 'deviation': 0.55},
+            '15m': {'depth': 6, 'deviation': 0.75}
         },
-        'macro_trend': {
-            '1d': {'depth': 15, 'deviation': 10.0},
-            '1wk': {'depth': 10, 'deviation': 15.0},
-            '1mo': {'depth': 5,  'deviation': 20.0}
+
+        # ------- INTRADAY (15m-1h) ----------
+        'intraday_momentum': {
+            '5m':  {'depth': 6, 'deviation': 0.80},
+            '15m': {'depth': 7, 'deviation': 1.10},
+            '1h':  {'depth': 8, 'deviation': 1.60}
         },
-        'major_structure': {
-            '4h': {'depth': 15, 'deviation': 8.0},
-            '1d': {'depth': 20, 'deviation': 10.0},
-            '1wk': {'depth': 18, 'deviation': 15.0}
+        'intraday_range': {
+            '5m':  {'depth': 7, 'deviation': 1.00},
+            '15m': {'depth': 8, 'deviation': 1.30},
+            '1h':  {'depth': 9, 'deviation': 1.90}
+        },
+
+        # ------- SWING (hor. de horas a dias) ----------
+        'swing_short': {
+            '15m': {'depth': 8,  'deviation': 2.0},
+            '1h':  {'depth': 10, 'deviation': 2.8},
+            '4h':  {'depth': 12, 'deviation': 4.0}
+        },
+        'swing_medium': {
+            '1h':  {'depth': 10, 'deviation': 3.2},
+            '4h':  {'depth': 12, 'deviation': 4.8},
+            '1d':  {'depth': 10, 'deviation': 6.0}
+        },
+        'swing_long': {
+            '4h':  {'depth': 13, 'deviation': 5.0},
+            '1d':  {'depth': 12, 'deviation': 7.0},
+            '1wk': {'depth': 10, 'deviation': 8.5}
+        },
+
+        # ------- POSITION / MACRO ----------
+        'position_trend': {
+            '1d':  {'depth': 15, 'deviation': 9.0},
+            '1wk': {'depth': 12, 'deviation': 12.0},
+            '1mo': {'depth': 8,  'deviation': 15.0}
+        },
+        'macro_trend_primary': {
+            '1wk': {'depth': 16, 'deviation': 13.0},
+            '1mo': {'depth': 10, 'deviation': 18.0}
         }
     }
 

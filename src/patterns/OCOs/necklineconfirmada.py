@@ -48,7 +48,6 @@ class Config:
         'SOL-USD',    # Solana
         'THETA-USD',  # Theta Network
         'TRX-USD',    # TRON
-        'TWT-USD',    # Trust Wallet Token
         'VET-USD',    # VeChain
         'XLM-USD',    # Stellar
         'XMR-USD',    # Monero
@@ -61,36 +60,57 @@ class Config:
     # <<< ALTERAÇÃO 1: ZIGZAG_STRATEGIES agora é a fonte da verdade >>>
     # As antigas variáveis INTERVALS e TIMEFRAME_PARAMS foram removidas.
     ZIGZAG_STRATEGIES = {
-        # 1. Foco em micro-estruturas (scalping, 1m-15m).
-        'micro_structure': {
-            '1m':  {'depth': 3, 'deviation': 0.2},
-            '5m':  {'depth': 4, 'deviation': 0.6},
-            '15m': {'depth': 5, 'deviation': 0.8}
+        # ------- SCALPING (micro-estruturas) ----------
+        'scalping_aggressive': {
+            '5m':  {'depth': 3, 'deviation': 0.25}
         },
-        # 2. Foco no intraday (15m-4h).
-        'day_trade': {
-            '15m': {'depth': 7,  'deviation': 1.0},
-            '1h':  {'depth': 8,  'deviation': 1.5},
-            '4h':  {'depth': 10, 'deviation': 2.5}
+        'scalping_moderate': {
+            '5m':  {'depth': 4, 'deviation': 0.40},
+            '15m': {'depth': 5, 'deviation': 0.60}
         },
-        # 3. Foco no médio prazo (4h-1w). O "padrão ouro".
-        'swing_structure': {
-            '4h': {'depth': 12, 'deviation': 4.0},
-            '1d': {'depth': 8,  'deviation': 6.0},
-            '1wk': {'depth': 5,  'deviation': 8.0}
+        'scalping_conservative': {
+            '5m':  {'depth': 5, 'deviation': 0.55},
+            '15m': {'depth': 6, 'deviation': 0.75}
         },
-        # 4. Foco no longo prazo (1d-1M).
-        'macro_trend': {
-            '1d': {'depth': 15, 'deviation': 10.0},
-            '1wk': {'depth': 10, 'deviation': 15.0},
-            # Cuidado com '1M', pode ter poucos dados
-            '1mo': {'depth': 5,  'deviation': 20.0}
+
+        # ------- INTRADAY (15m-1h) ----------
+        'intraday_momentum': {
+            '5m':  {'depth': 6, 'deviation': 0.80},
+            '15m': {'depth': 7, 'deviation': 1.10},
+            '1h':  {'depth': 8, 'deviation': 1.60}
         },
-        # 5. Foco em estruturas principais de longo prazo com filtro máximo.
-        'major_structure': {
-            '4h': {'depth': 15, 'deviation': 8.0},
-            '1d': {'depth': 20, 'deviation': 10.0},
-            '1wk': {'depth': 18, 'deviation': 15.0}
+        'intraday_range': {
+            '5m':  {'depth': 7, 'deviation': 1.00},
+            '15m': {'depth': 8, 'deviation': 1.30},
+            '1h':  {'depth': 9, 'deviation': 1.90}
+        },
+
+        # ------- SWING (hor. de horas a dias) ----------
+        'swing_short': {
+            '15m': {'depth': 8,  'deviation': 2.0},
+            '1h':  {'depth': 10, 'deviation': 2.8},
+            '4h':  {'depth': 12, 'deviation': 4.0}
+        },
+        'swing_medium': {
+            '1h':  {'depth': 10, 'deviation': 3.2},
+            '4h':  {'depth': 12, 'deviation': 4.8},
+            '1d':  {'depth': 10, 'deviation': 6.0}
+        },
+        'swing_long': {
+            '4h':  {'depth': 13, 'deviation': 5.0},
+            '1d':  {'depth': 12, 'deviation': 7.0},
+            '1wk': {'depth': 10, 'deviation': 8.5}
+        },
+
+        # ------- POSITION / MACRO ----------
+        'position_trend': {
+            '1d':  {'depth': 15, 'deviation': 9.0},
+            '1wk': {'depth': 12, 'deviation': 12.0},
+            '1mo': {'depth': 8,  'deviation': 15.0}
+        },
+        'macro_trend_primary': {
+            '1wk': {'depth': 16, 'deviation': 13.0},
+            '1mo': {'depth': 10, 'deviation': 18.0}
         }
     }
 
@@ -112,7 +132,7 @@ class Config:
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
-    HEAD_EXTREME_LOOKBACK_FACTOR = 2
+    HEAD_EXTREME_LOOKBACK_FACTOR = 3
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
 
@@ -365,10 +385,11 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
 
     # Percentual de tolerância: 25 % do ATR relativo ao preço da neckline
     # com piso absoluto de 0,3 % para evitar valores demasiadamente pequenos
-    tol_pct = 0.4 * atr_val / neckline_price if neckline_price else 0
+    tol_pct = 0.3 * atr_val / neckline_price if neckline_price else 0
     tol_pct = max(tol_pct, 0.003)  # mínimo de 0,3 %
 
     max_variation = neckline_price * tol_pct
+    # max_variation = neckline_price * 0.03
 
     # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
     is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
