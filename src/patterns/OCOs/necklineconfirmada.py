@@ -91,27 +91,6 @@ class Config:
             '1h':  {'depth': 10, 'deviation': 2.8},
             '4h':  {'depth': 12, 'deviation': 4.0}
         },
-        'swing_medium': {
-            '1h':  {'depth': 10, 'deviation': 3.2},
-            '4h':  {'depth': 12, 'deviation': 4.8},
-            '1d':  {'depth': 10, 'deviation': 6.0}
-        },
-        'swing_long': {
-            '4h':  {'depth': 13, 'deviation': 5.0},
-            '1d':  {'depth': 12, 'deviation': 7.0},
-            '1wk': {'depth': 10, 'deviation': 8.5}
-        },
-
-        # ------- POSITION / MACRO ----------
-        'position_trend': {
-            '1d':  {'depth': 15, 'deviation': 9.0},
-            '1wk': {'depth': 12, 'deviation': 12.0},
-            '1mo': {'depth': 8,  'deviation': 15.0}
-        },
-        'macro_trend_primary': {
-            '1wk': {'depth': 16, 'deviation': 13.0},
-            '1mo': {'depth': 10, 'deviation': 18.0}
-        }
     }
 
     # --- SISTEMA DE REGRAS E PONTUAÇÃO (Sem alterações) ---
@@ -235,22 +214,36 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
         last_confirmed_pivot = confirmed_pivots[-1]
         last_bar = df.iloc[-1]
 
-        # Cria um pivô potencial no último candle disponível
-        potential_pivot = {
-            'idx': df.index[-1],
-            # Se o último pivô foi um VALE, o próximo é um PICO potencial, e vice-versa.
-            'tipo': 'PICO' if last_confirmed_pivot['tipo'] == 'VALE' else 'VALE'
-        }
-
-        # Usa o preço da máxima ou mínima do último candle
-        if potential_pivot['tipo'] == 'PICO':
-            potential_pivot['preco'] = last_bar['high']
-        else:
-            potential_pivot['preco'] = last_bar['low']
-
-        # Adiciona o pivô potencial à lista se for diferente do último confirmado
-        if potential_pivot['idx'] != last_confirmed_pivot['idx']:
-            confirmed_pivots.append(potential_pivot)
+        # Se o último candle prolongar o movimento na MESMA direção,
+        # apenas atualizamos o pivô existente. Caso contrário, criamos um novo pivô.
+        if last_confirmed_pivot['tipo'] == 'PICO':
+            # Movimento ainda de alta: atualiza o pico existente
+            if last_bar['high'] > last_confirmed_pivot['preco']:
+                last_confirmed_pivot['preco'] = last_bar['high']
+                last_confirmed_pivot['idx'] = df.index[-1]
+            else:
+                # Inverteu para baixa → cria um VALE
+                potential_pivot = {
+                    'idx': df.index[-1],
+                    'tipo': 'VALE',
+                    'preco': last_bar['low']
+                }
+                if potential_pivot['idx'] != last_confirmed_pivot['idx']:
+                    confirmed_pivots.append(potential_pivot)
+        else:  # último pivô é VALE
+            # Movimento ainda de baixa: atualiza o vale existente
+            if last_bar['low'] < last_confirmed_pivot['preco']:
+                last_confirmed_pivot['preco'] = last_bar['low']
+                last_confirmed_pivot['idx'] = df.index[-1]
+            else:
+                # Inverteu para alta → cria um PICO
+                potential_pivot = {
+                    'idx': df.index[-1],
+                    'tipo': 'PICO',
+                    'preco': last_bar['high']
+                }
+                if potential_pivot['idx'] != last_confirmed_pivot['idx']:
+                    confirmed_pivots.append(potential_pivot)
 
     return confirmed_pivots
 
@@ -386,7 +379,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     # Percentual de tolerância: 25 % do ATR relativo ao preço da neckline
     # com piso absoluto de 0,3 % para evitar valores demasiadamente pequenos
     tol_pct = 0.3 * atr_val / neckline_price if neckline_price else 0
-    tol_pct = max(tol_pct, 0.003)  # mínimo de 0,3 %
+    tol_pct = max(tol_pct, 0.01)  # mínimo de 0,3 %
 
     max_variation = neckline_price * tol_pct
     # max_variation = neckline_price * 0.03
@@ -541,7 +534,7 @@ def main():
 
     # <<< ALTERAÇÃO 5: Inclui 'strategy' na chave de identificação de duplicatas >>>
     df_final.drop_duplicates(subset=[
-        'ticker', 'timeframe', 'strategy', 'padrao_tipo', 'cabeca_idx'], inplace=True, keep='first')
+        'ticker', 'timeframe', 'padrao_tipo', 'cabeca_idx'], inplace=True, keep='first')
 
     # <<< ALTERAÇÃO 6: Adiciona 'strategy' nas colunas de informação >>>
     cols_info = ['ticker', 'timeframe',

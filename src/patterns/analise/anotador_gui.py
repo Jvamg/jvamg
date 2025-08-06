@@ -59,27 +59,6 @@ class Config:
             '1h':  {'depth': 10, 'deviation': 2.8},
             '4h':  {'depth': 12, 'deviation': 4.0}
         },
-        'swing_medium': {
-            '1h':  {'depth': 10, 'deviation': 3.2},
-            '4h':  {'depth': 12, 'deviation': 4.8},
-            '1d':  {'depth': 10, 'deviation': 6.0}
-        },
-        'swing_long': {
-            '4h':  {'depth': 13, 'deviation': 5.0},
-            '1d':  {'depth': 12, 'deviation': 7.0},
-            '1wk': {'depth': 10, 'deviation': 8.5}
-        },
-
-        # ------- POSITION / MACRO ----------
-        'position_trend': {
-            '1d':  {'depth': 15, 'deviation': 9.0},
-            '1wk': {'depth': 12, 'deviation': 12.0},
-            '1mo': {'depth': 8,  'deviation': 15.0}
-        },
-        'macro_trend_primary': {
-            '1wk': {'depth': 16, 'deviation': 13.0},
-            '1mo': {'depth': 10, 'deviation': 18.0}
-        }
     }
 
     ARQUIVO_ENTRADA = 'data/datasets/datasets_hns_by_strategy/dataset_hns_by_strategy_final.csv'
@@ -149,8 +128,14 @@ class LabelingTool(tk.Tk):
 
         data_inicio_padrao = pd.to_datetime(
             padrao_info['data_inicio']).tz_localize(None)
-        data_fim_padrao = pd.to_datetime(
-            padrao_info['data_fim']).tz_localize(None)
+        # Preferimos a data do RETESTE se existir; caso contrário, usamos data_fim (ombro direito)
+        data_retest_padrao = padrao_info.get('data_retest')
+        if pd.notna(data_retest_padrao):
+            data_fim_padrao = pd.to_datetime(
+                data_retest_padrao).tz_localize(None)
+        else:
+            data_fim_padrao = pd.to_datetime(
+                padrao_info['data_fim']).tz_localize(None)
 
         if pd.isna(data_inicio_padrao) or pd.isna(data_fim_padrao):
             self.marcar_e_avancar(-1)
@@ -166,7 +151,22 @@ class LabelingTool(tk.Tk):
         # Fazemos um download amplo primeiro. O "zoom" será feito depois, com o pandas.
         download_start_date = data_inicio_padrao - \
             pd.Timedelta(days=lookback_days)
-        download_end_date = data_fim_padrao + pd.Timedelta(days=1)
+        # Calcula um delta mínimo para incluir o candle do reteste sem avançar muito.
+        if 'm' in intervalo:
+            interval_delta = pd.Timedelta(
+                minutes=int(intervalo.replace('m', '')))
+        elif 'h' in intervalo:
+            interval_delta = pd.Timedelta(
+                hours=int(intervalo.replace('h', '')))
+        elif 'd' in intervalo:
+            interval_delta = pd.Timedelta(days=1)
+        elif 'wk' in intervalo:
+            interval_delta = pd.Timedelta(weeks=1)
+        elif 'mo' in intervalo:
+            interval_delta = pd.Timedelta(days=31)
+        else:
+            interval_delta = pd.Timedelta(days=1)
+        download_end_date = data_fim_padrao + interval_delta
 
         df_full = None
         for _ in range(Config.MAX_DOWNLOAD_TENTATIVAS):
@@ -285,14 +285,15 @@ class LabelingTool(tk.Tk):
             rename_map = {
                 'timeframe': 'intervalo', 'strategy': 'estrategia_zigzag',
                 'padrao_tipo': 'tipo_padrao', 'ombro1_idx': 'data_inicio',
-                'ombro2_idx': 'data_fim', 'cabeca_idx': 'data_cabeca'
+                'ombro2_idx': 'data_fim', 'cabeca_idx': 'data_cabeca',
+                'retest_p6_idx': 'data_retest'
             }
             self.df_trabalho.rename(
                 columns={k: v for k, v in rename_map.items(
                 ) if k in self.df_trabalho.columns},
                 inplace=True
             )
-            for col in ['data_inicio', 'data_fim', 'data_cabeca']:
+            for col in ['data_inicio', 'data_fim', 'data_cabeca', 'data_retest']:
                 if col in self.df_trabalho.columns:
                     self.df_trabalho[col] = pd.to_datetime(
                         self.df_trabalho[col], errors='coerce')
@@ -366,23 +367,24 @@ class LabelingTool(tk.Tk):
     def _calcular_zigzag(self, df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
         peak_series, valley_series = df['high'], df['low']
         window_size = 2 * depth + 1
-        rolling_max = peak_series.rolling(
-            window=window_size, center=True, min_periods=1).max()
-        rolling_min = valley_series.rolling(
-            window=window_size, center=True, min_periods=1).min()
-        candidate_peaks_df = df[peak_series == rolling_max]
-        candidate_valleys_df = df[valley_series == rolling_min]
-        candidates = []
+        rolling_max, rolling_min = peak_series.rolling(window=window_size, center=True, min_periods=1).max(), \
+            valley_series.rolling(window=window_size,
+                                  center=True, min_periods=1).min()
+        candidate_peaks_df, candidate_valleys_df = df[peak_series ==
+                                                      rolling_max], df[valley_series == rolling_min]
+        candidates: List[Dict[str, Any]] = []
         for idx, row in candidate_peaks_df.iterrows():
             candidates.append(
                 {'idx': idx, 'preco': row[peak_series.name], 'tipo': 'PICO'})
         for idx, row in candidate_valleys_df.iterrows():
             candidates.append(
                 {'idx': idx, 'preco': row[valley_series.name], 'tipo': 'VALE'})
+        # Remove duplicidades e ordena
         candidates = sorted(
-            list({p['idx']: p for p in candidates}.values()), key=lambda x: x['idx'])
+            {p['idx']: p for p in candidates}.values(), key=lambda x: x['idx'])
         if len(candidates) < 2:
             return []
+
         confirmed_pivots = [candidates[0]]
         last_pivot = candidates[0]
         for i in range(1, len(candidates)):
@@ -399,6 +401,43 @@ class LabelingTool(tk.Tk):
             if price_dev >= deviation_percent:
                 confirmed_pivots.append(candidate)
                 last_pivot = candidate
+
+        # --- Extensão opcional ao último candle com fusão de pivô ---
+        if Config.ZIGZAG_EXTEND_TO_LAST_BAR and confirmed_pivots:
+            last_confirmed_pivot = confirmed_pivots[-1]
+            last_bar = df.iloc[-1]
+
+            # Se o último candle prolongar o movimento na MESMA direção,
+            # apenas atualizamos o pivô existente. Caso contrário, criamos um novo pivô.
+            if last_confirmed_pivot['tipo'] == 'PICO':
+                # Movimento ainda de alta: atualiza o pico existente
+                if last_bar['high'] > last_confirmed_pivot['preco']:
+                    last_confirmed_pivot['preco'] = last_bar['high']
+                    last_confirmed_pivot['idx'] = df.index[-1]
+                else:
+                    # Inverteu para baixa → cria um VALE
+                    potential_pivot = {
+                        'idx': df.index[-1],
+                        'tipo': 'VALE',
+                        'preco': last_bar['low']
+                    }
+                    if potential_pivot['idx'] != last_confirmed_pivot['idx']:
+                        confirmed_pivots.append(potential_pivot)
+            else:  # último pivô é VALE
+                # Movimento ainda de baixa: atualiza o vale existente
+                if last_bar['low'] < last_confirmed_pivot['preco']:
+                    last_confirmed_pivot['preco'] = last_bar['low']
+                    last_confirmed_pivot['idx'] = df.index[-1]
+                else:
+                    # Inverteu para alta → cria um PICO
+                    potential_pivot = {
+                        'idx': df.index[-1],
+                        'tipo': 'PICO',
+                        'preco': last_bar['high']
+                    }
+                    if potential_pivot['idx'] != last_confirmed_pivot['idx']:
+                        confirmed_pivots.append(potential_pivot)
+
         return confirmed_pivots
 
     def _preparar_zigzag_plot(self, todos_os_pivots: List[Dict[str, Any]], df_view: pd.DataFrame) -> pd.Series:
@@ -417,9 +456,13 @@ class LabelingTool(tk.Tk):
         for p in todos_os_pivots:
             if p['idx'] in df_view.index:
                 plot_points_dict[p['idx']] = p['preco']
-        if Config.ZIGZAG_EXTEND_TO_LAST_BAR:
-            if not df_view.empty:
+
+        # Se o último pivô visível não estiver no final do df_view, adicionamos o último candle
+        if plot_points_dict:
+            last_visible_idx = max(plot_points_dict.keys())
+            if last_visible_idx != df_view.index[-1]:
                 plot_points_dict[df_view.index[-1]] = df_view['close'].iloc[-1]
+
         if not plot_points_dict:
             return pd.Series(dtype='float64', index=df_view.index)
         points_series = pd.Series(plot_points_dict)
