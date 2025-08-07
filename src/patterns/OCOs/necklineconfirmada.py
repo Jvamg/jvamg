@@ -91,6 +91,27 @@ class Config:
             '1h':  {'depth': 10, 'deviation': 2.8},
             '4h':  {'depth': 12, 'deviation': 4.0}
         },
+        'swing_medium': {
+            '1h':  {'depth': 10, 'deviation': 3.2},
+            '4h':  {'depth': 12, 'deviation': 4.8},
+            '1d':  {'depth': 10, 'deviation': 6.0}
+        },
+        'swing_long': {
+            '4h':  {'depth': 13, 'deviation': 5.0},
+            '1d':  {'depth': 12, 'deviation': 7.0},
+            '1wk': {'depth': 10, 'deviation': 8.5}
+        },
+
+        # ------- POSITION / MACRO ----------
+        'position_trend': {
+            '1d':  {'depth': 15, 'deviation': 9.0},
+            '1wk': {'depth': 12, 'deviation': 12.0},
+            '1mo': {'depth': 8,  'deviation': 15.0}
+        },
+        'macro_trend_primary': {
+            '1wk': {'depth': 16, 'deviation': 13.0},
+            '1mo': {'depth': 10, 'deviation': 18.0}
+        }
     }
 
     # --- SISTEMA DE REGRAS E PONTUAÇÃO (Sem alterações) ---
@@ -114,6 +135,7 @@ class Config:
     HEAD_EXTREME_LOOKBACK_FACTOR = 3
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
+    NECKLINE_RETEST_ATR_MULTIPLIER = 4
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
@@ -248,21 +270,35 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
     return confirmed_pivots
 
 
-def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_days: int) -> bool:
-    # ... (código idêntico)
-    lookback_period = int(avg_pivot_dist_days *
-                          Config.HEAD_EXTREME_LOOKBACK_FACTOR)
-    if lookback_period <= 0:
+def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int) -> bool:
+    """ Verifica se a cabeça do padrão é o ponto mais extremo num período de lookback em BARRAS. """
+    lookback_bars = int(avg_pivot_dist_bars *
+                        Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+    if lookback_bars <= 0:
         return True
-    start_date, end_date = head_pivot['idx'] - pd.Timedelta(
-        days=lookback_period), head_pivot['idx'] + pd.Timedelta(days=lookback_period)
-    context_df = df.loc[start_date:end_date]
-    if context_df.empty:
-        return True
-    if head_pivot['tipo'] == 'PICO':
-        return head_pivot['preco'] >= context_df['high'].max()
-    else:
-        return head_pivot['preco'] <= context_df['low'].min()
+
+    try:
+        # Encontra a posição numérica (iloc) do pivô da cabeça
+        head_loc = df.index.get_loc(head_pivot['idx'])
+
+        # Define o início e o fim da janela de busca em posições numéricas
+        start_loc = max(0, head_loc - lookback_bars)
+        end_loc = min(len(df), head_loc + lookback_bars + 1)
+
+        # Fatia o DataFrame usando as posições para criar a janela de contexto
+        context_df = df.iloc[start_loc:end_loc]
+
+        if context_df.empty:
+            return True
+
+        if head_pivot['tipo'] == 'PICO':
+            return head_pivot['preco'] >= context_df['high'].max()
+        else:  # VALE
+            return head_pivot['preco'] <= context_df['low'].min()
+
+    except KeyError:
+        # A data do pivô não foi encontrada no índice do DataFrame
+        return False
 
 
 def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
@@ -321,7 +357,7 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
 
 
 ### MUDANÇA 6: Atualizar a assinatura da função para receber p6 ###
-def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_days):
+def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_bars):
     details = {key: False for key in Config.SCORE_WEIGHTS.keys()}
     ombro_esq, neckline1, cabeca, neckline2, ombro_dir = p1, p2, p3, p4, p5
 
@@ -340,7 +376,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
         return None
 
     details['valid_contexto_cabeca'] = is_head_extreme(
-        df_historico, cabeca, avg_pivot_dist_days)
+        df_historico, cabeca, avg_pivot_dist_bars)
     if not details['valid_contexto_cabeca']:
         return None
 
@@ -378,10 +414,10 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
 
     # Percentual de tolerância: 25 % do ATR relativo ao preço da neckline
     # com piso absoluto de 0,3 % para evitar valores demasiadamente pequenos
-    tol_pct = 0.3 * atr_val / neckline_price if neckline_price else 0
-    tol_pct = max(tol_pct, 0.01)  # mínimo de 0,3 %
+    # tol_pct = 0.3 * atr_val / neckline_price if neckline_price else 0
+    # tol_pct = max(tol_pct, 0.01)  # mínimo de 0,3 %
 
-    max_variation = neckline_price * tol_pct
+    max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
     # max_variation = neckline_price * 0.03
 
     # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
@@ -443,8 +479,19 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     n = len(pivots)
     if n < 7:
         return []
-    avg_pivot_dist_days = np.mean(
-        [(pivots[i]['idx'] - pivots[i-1]['idx']).days for i in range(1, n)]) if n > 1 else 0
+    try:
+        # Cria um mapeador de timestamp para posição numérica para eficiência
+        locs = pd.Series(range(len(df_historico)), index=df_historico.index)
+        distancias_em_barras = [
+            locs[pivots[i]['idx']] - locs[pivots[i-1]['idx']]
+            for i in range(1, n)
+            if pivots[i]['idx'] in locs and pivots[i-1]['idx'] in locs
+        ]
+        avg_pivot_dist_bars = np.mean(
+            distancias_em_barras) if distancias_em_barras else 0
+    except Exception as e:
+        print(f"{Fore.YELLOW}Aviso: Não foi possível calcular a distância média dos pivôs. Erro: {e}{Style.RESET_ALL}")
+        avg_pivot_dist_bars = 0  # Fallback
     start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
 
     print(
@@ -469,7 +516,7 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
         if tipo_padrao:
             ### MUDANÇA 5: Passar p6 para a função de validação ###
             dados_padrao = validate_and_score_hns_pattern(
-                p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_days)
+                p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_bars)
             if dados_padrao:
                 padroes_encontrados.append(dados_padrao)
 

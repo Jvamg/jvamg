@@ -59,6 +59,27 @@ class Config:
             '1h':  {'depth': 10, 'deviation': 2.8},
             '4h':  {'depth': 12, 'deviation': 4.0}
         },
+        'swing_medium': {
+            '1h':  {'depth': 10, 'deviation': 3.2},
+            '4h':  {'depth': 12, 'deviation': 4.8},
+            '1d':  {'depth': 10, 'deviation': 6.0}
+        },
+        'swing_long': {
+            '4h':  {'depth': 13, 'deviation': 5.0},
+            '1d':  {'depth': 12, 'deviation': 7.0},
+            '1wk': {'depth': 10, 'deviation': 8.5}
+        },
+
+        # ------- POSITION / MACRO ----------
+        'position_trend': {
+            '1d':  {'depth': 15, 'deviation': 9.0},
+            '1wk': {'depth': 12, 'deviation': 12.0},
+            '1mo': {'depth': 8,  'deviation': 15.0}
+        },
+        'macro_trend_primary': {
+            '1wk': {'depth': 16, 'deviation': 13.0},
+            '1mo': {'depth': 10, 'deviation': 18.0}
+        }
     }
 
     ARQUIVO_ENTRADA = 'data/datasets/datasets_hns_by_strategy/dataset_hns_by_strategy_final.csv'
@@ -145,25 +166,27 @@ class LabelingTool(tk.Tk):
         # A lógica de download agora precisa de um lookback maior para garantir que teremos
         # candles suficientes para a nova lógica de buffer posicional.
         lookback_days = (
-            Config.ZIGZAG_LOOKBACK_DAYS_MINUTE if 'm' in intervalo
+            Config.ZIGZAG_LOOKBACK_DAYS_MINUTE if intervalo.endswith('m') and not intervalo.endswith('mo')
             else Config.ZIGZAG_LOOKBACK_DAYS_DEFAULT
         )
         # Fazemos um download amplo primeiro. O "zoom" será feito depois, com o pandas.
+
         download_start_date = data_inicio_padrao - \
             pd.Timedelta(days=lookback_days)
+
         # Calcula um delta mínimo para incluir o candle do reteste sem avançar muito.
-        if 'm' in intervalo:
-            interval_delta = pd.Timedelta(
-                minutes=int(intervalo.replace('m', '')))
-        elif 'h' in intervalo:
-            interval_delta = pd.Timedelta(
-                hours=int(intervalo.replace('h', '')))
-        elif 'd' in intervalo:
-            interval_delta = pd.Timedelta(days=1)
-        elif 'wk' in intervalo:
-            interval_delta = pd.Timedelta(weeks=1)
-        elif 'mo' in intervalo:
+        if intervalo.endswith('mo'):
             interval_delta = pd.Timedelta(days=31)
+        elif intervalo.endswith('wk'):
+            interval_delta = pd.Timedelta(weeks=1)
+        elif intervalo.endswith('d'):
+            interval_delta = pd.Timedelta(days=1)
+        elif intervalo.endswith('h'):
+            interval_delta = pd.Timedelta(
+                hours=int(''.join(filter(str.isdigit, intervalo))) or 1)
+        elif intervalo.endswith('m'):
+            interval_delta = pd.Timedelta(
+                minutes=int(''.join(filter(str.isdigit, intervalo))) or 1)
         else:
             interval_delta = pd.Timedelta(days=1)
         download_end_date = data_fim_padrao + interval_delta
