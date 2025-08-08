@@ -13,6 +13,9 @@ init(autoreset=True)
 
 
 class Config:
+    # --- Controle de execução de padrões ---
+    # 'HNS' ativa a busca por Head & Shoulders; 'DTB' ativa a busca por Topo/Fundo Duplo
+    PATTERNS_TO_RUN = ['DTB']
     TICKERS = [
         'AAVE-USD',   # Aave
         'ADA-USD',    # Cardano
@@ -632,6 +635,7 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
 
 def main():
     print(f"{Style.BRIGHT}--- INICIANDO MOTOR DE GERAÇÃO (v20 - Estratégias) ---")
+    print(f"{Style.BRIGHT}--- PADRÕES ATIVADOS: {', '.join(Config.PATTERNS_TO_RUN)} ---")
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
     todos_os_padroes_finais = []
@@ -659,17 +663,18 @@ def main():
 
                     todos_os_padroes_nesta_execucao: List[Dict[str, Any]] = []
 
-                    if len(pivots_detectados) >= 7:
+                    if 'HNS' in Config.PATTERNS_TO_RUN and len(pivots_detectados) >= 7:
                         print("Identificando padrões H&S com regras obrigatórias...")
                         padroes_hns_encontrados = identificar_padroes_hns(
                             pivots_detectados, df_historico)
                         todos_os_padroes_nesta_execucao.extend(
                             padroes_hns_encontrados)
 
-                    padroes_dtb_encontrados = identificar_padroes_double_top_bottom(
-                        pivots_detectados, df_historico)
-                    todos_os_padroes_nesta_execucao.extend(
-                        padroes_dtb_encontrados)
+                    if 'DTB' in Config.PATTERNS_TO_RUN:
+                        padroes_dtb_encontrados = identificar_padroes_double_top_bottom(
+                            pivots_detectados, df_historico)
+                        todos_os_padroes_nesta_execucao.extend(
+                            padroes_dtb_encontrados)
 
                     if todos_os_padroes_nesta_execucao:
                         print(
