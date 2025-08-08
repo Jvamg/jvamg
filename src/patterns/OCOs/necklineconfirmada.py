@@ -114,19 +114,29 @@ class Config:
         }
     }
 
-    # --- SISTEMA DE REGRAS E PONTUAÇÃO (Sem alterações) ---
-    SCORE_WEIGHTS = {
+    # --- SISTEMA DE REGRAS E PONTUAÇÃO (H&S) ---
+    SCORE_WEIGHTS_HNS = {
         # Regras obrigatórias
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
         'valid_simetria_ombros': 10, 'valid_neckline_plana': 5,
         'valid_base_tendencia': 5,
         'valid_neckline_retest_p6': 15,
-        # Regras opicionais
+        # Regras opcionais
         'valid_divergencia_rsi': 15,
         'valid_divergencia_macd': 10, 'valid_proeminencia_cabeca': 10,
         'valid_ombro_direito_fraco': 5, 'valid_perfil_volume': 5
     }
-    MINIMUM_SCORE_TO_SAVE = 70
+    MINIMUM_SCORE_HNS = 70
+
+    # --- CONFIGURAÇÕES FUTURAS: TOPO/FUNDO DUPLO (DTB) ---
+    SCORE_WEIGHTS_DTB = {
+        'valid_estrutura_picos_vales': 25,
+        'valid_simetria_extremos': 25,
+        'valid_profundidade_vale_pico': 25
+    }
+    MINIMUM_SCORE_DTB = 75
+    DTB_SYMMETRY_TOLERANCE_FACTOR = 0.05
+    DTB_VALLEY_PEAK_DEPTH_RATIO = 0.3
 
     # Parâmetros de validação (Sem alterações)
     HEAD_SIGNIFICANCE_RATIO = 1.1
@@ -135,15 +145,14 @@ class Config:
     HEAD_EXTREME_LOOKBACK_FACTOR = 3
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
-    NECKLINE_RETEST_ATR_MULTIPLIER = 4
+    NECKLINE_RETEST_ATR_MULTIPLIER = 0.75
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
     MAX_DOWNLOAD_TENTATIVAS, RETRY_DELAY_SEGUNDOS = 3, 5
     # <<< ALTERAÇÃO 2: Novo diretório de saída para organizar os resultados >>>
-    OUTPUT_DIR = 'data/datasets/datasets_hns_by_strategy'
-    FINAL_CSV_PATH = os.path.join(
-        OUTPUT_DIR, 'dataset_hns_by_strategy_final.csv')
+    OUTPUT_DIR = 'data/datasets/patterns_by_strategy'
+    FINAL_CSV_PATH = os.path.join(OUTPUT_DIR, 'dataset_patterns_final.csv')
 
 # --- FUNÇÕES AUXILIARES (Sem alterações no corpo das funções) ---
 # buscar_dados, calcular_zigzag_oficial, is_head_extreme, check_rsi_divergence,
@@ -358,7 +367,7 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
 
 ### MUDANÇA 6: Atualizar a assinatura da função para receber p6 ###
 def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_bars):
-    details = {key: False for key in Config.SCORE_WEIGHTS.keys()}
+    details = {key: False for key in Config.SCORE_WEIGHTS_HNS.keys()}
     ombro_esq, neckline1, cabeca, neckline2, ombro_dir = p1, p2, p3, p4, p5
 
     # --- Lógica de validação original (sem alterações) ---
@@ -435,27 +444,27 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     score = 0
     for rule, passed in details.items():
         if passed:
-            score += Config.SCORE_WEIGHTS.get(rule, 0)
+            score += Config.SCORE_WEIGHTS_HNS.get(rule, 0)
 
     # ... (Resto da lógica de pontuação opcional permanece a mesma) ...
     if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
         details['valid_proeminencia_cabeca'] = True
-        score += Config.SCORE_WEIGHTS['valid_proeminencia_cabeca']
+        score += Config.SCORE_WEIGHTS_HNS['valid_proeminencia_cabeca']
     if check_rsi_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
         details['valid_divergencia_rsi'] = True
-        score += Config.SCORE_WEIGHTS['valid_divergencia_rsi']
+        score += Config.SCORE_WEIGHTS_HNS['valid_divergencia_rsi']
     if check_macd_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
         details['valid_divergencia_macd'] = True
-        score += Config.SCORE_WEIGHTS['valid_divergencia_macd']
+        score += Config.SCORE_WEIGHTS_HNS['valid_divergencia_macd']
     if (tipo_padrao == 'OCO' and ombro_dir['preco'] < ombro_esq['preco']) or \
        (tipo_padrao == 'OCOI' and ombro_dir['preco'] > ombro_esq['preco']):
         details['valid_ombro_direito_fraco'] = True
-        score += Config.SCORE_WEIGHTS['valid_ombro_direito_fraco']
+        score += Config.SCORE_WEIGHTS_HNS['valid_ombro_direito_fraco']
     if check_volume_profile(df_historico, pivots, p1['idx'], p3['idx'], p5['idx']):
         details['valid_perfil_volume'] = True
-        score += Config.SCORE_WEIGHTS['valid_perfil_volume']
+        score += Config.SCORE_WEIGHTS_HNS['valid_perfil_volume']
 
-    if score >= Config.MINIMUM_SCORE_TO_SAVE:
+    if score >= Config.MINIMUM_SCORE_HNS:
         base_data = {
             'padrao_tipo': tipo_padrao, 'score_total': score,
             'p0_idx': p0['idx'],
@@ -523,6 +532,104 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     return padroes_encontrados
 
 
+def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico):
+    """Valida e pontua padrões de Topo Duplo (DT) e Fundo Duplo (DB)."""
+    if tipo_padrao not in ('DT', 'DB'):
+        return None
+
+    details = {key: False for key in Config.SCORE_WEIGHTS_DTB.keys()}
+
+    preco_p0, preco_p1 = float(p0['preco']), float(p1['preco'])
+    preco_p2, preco_p3 = float(p2['preco']), float(p3['preco'])
+
+    # Estrutura: tipos de pivô esperados e relações de preço básicas
+    if tipo_padrao == 'DT':
+        estrutura_tipos_ok = (
+            p1.get('tipo') == 'PICO' and p2.get(
+                'tipo') == 'VALE' and p3.get('tipo') == 'PICO'
+        )
+        relacoes_precos_ok = (preco_p1 > preco_p0) and (
+            preco_p1 > preco_p2 and preco_p3 > preco_p2)
+    else:  # 'DB'
+        estrutura_tipos_ok = (
+            p1.get('tipo') == 'VALE' and p2.get(
+                'tipo') == 'PICO' and p3.get('tipo') == 'VALE'
+        )
+        relacoes_precos_ok = (preco_p1 < preco_p0) and (
+            preco_p1 < preco_p2 and preco_p3 < preco_p2)
+
+    details['valid_estrutura_picos_vales'] = estrutura_tipos_ok and relacoes_precos_ok
+    if not details['valid_estrutura_picos_vales']:
+        return None
+
+    # Simetria dos extremos (p1 ~ p3) baseada na ALTURA do padrão (|p1 - p2|)
+    altura_padrao = abs(preco_p1 - preco_p2)
+    tolerancia_preco = Config.DTB_SYMMETRY_TOLERANCE_FACTOR * altura_padrao
+    details['valid_simetria_extremos'] = abs(
+        preco_p1 - preco_p3) <= tolerancia_preco
+    if not details['valid_simetria_extremos']:
+        return None
+
+    # Profundidade do vale/pico central relativa à perna anterior (p0->p1)
+    perna_anterior = abs(preco_p1 - preco_p0)
+    if tipo_padrao == 'DT':
+        profundidade = preco_p1 - preco_p2
+    else:  # 'DB'
+        profundidade = preco_p2 - preco_p1
+    required = Config.DTB_VALLEY_PEAK_DEPTH_RATIO * perna_anterior
+    details['valid_profundidade_vale_pico'] = perna_anterior > 0 and profundidade >= required
+
+    # Pontuação
+    score = 0
+    for rule, passed in details.items():
+        if passed:
+            score += Config.SCORE_WEIGHTS_DTB.get(rule, 0)
+
+    if score >= Config.MINIMUM_SCORE_DTB:
+        return {
+            'padrao_tipo': tipo_padrao,
+            'score_total': score,
+            'p0_idx': p0['idx'], 'p0_preco': preco_p0,
+            'p1_idx': p1['idx'], 'p1_preco': preco_p1,
+            'p2_idx': p2['idx'], 'p2_preco': preco_p2,
+            'p3_idx': p3['idx'], 'p3_preco': preco_p3,
+            **details
+        }
+
+    return None
+
+
+def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_historico: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Identifica padrões candidatos de Topo Duplo (DT) e Fundo Duplo (DB) e valida-os."""
+    padroes_encontrados: List[Dict[str, Any]] = []
+    n = len(pivots)
+    if n < 4:
+        return []
+
+    start_index = max(0, n - 3 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
+    print(
+        f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} candidatos DT/DB (a partir do índice {start_index}).")
+
+    for i in range(start_index, n - 3):
+        janela = pivots[i:i+4]
+        p0, p1, p2, p3 = janela[0], janela[1], janela[2], janela[3]
+
+        tipo_padrao = None
+        # Verificação rigorosa: usa a janela completa (p0..p3)
+        if all(p.get('tipo') == t for p, t in zip(janela, ['VALE', 'PICO', 'VALE', 'PICO'])):
+            tipo_padrao = 'DT'
+        elif all(p.get('tipo') == t for p, t in zip(janela, ['PICO', 'VALE', 'PICO', 'VALE'])):
+            tipo_padrao = 'DB'
+
+        if tipo_padrao:
+            dados_padrao = validate_and_score_double_pattern(
+                p0, p1, p2, p3, tipo_padrao, df_historico)
+            if dados_padrao:
+                padroes_encontrados.append(dados_padrao)
+
+    return padroes_encontrados
+
+
 def main():
     print(f"{Style.BRIGHT}--- INICIANDO MOTOR DE GERAÇÃO (v20 - Estratégias) ---")
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
@@ -545,27 +652,36 @@ def main():
                     pivots_detectados = calcular_zigzag_oficial(
                         df_historico, params['depth'], params['deviation'])
 
-                    if len(pivots_detectados) < 7:
+                    if len(pivots_detectados) < 4:
                         print(
                             "ℹ️ Número insuficiente de pivôs para formar um padrão.")
                         continue
 
-                    print("Identificando padrões H&S com regras obrigatórias...")
-                    padroes_encontrados = identificar_padroes_hns(
-                        pivots_detectados, df_historico)
+                    todos_os_padroes_nesta_execucao: List[Dict[str, Any]] = []
 
-                    if padroes_encontrados:
+                    if len(pivots_detectados) >= 7:
+                        print("Identificando padrões H&S com regras obrigatórias...")
+                        padroes_hns_encontrados = identificar_padroes_hns(
+                            pivots_detectados, df_historico)
+                        todos_os_padroes_nesta_execucao.extend(
+                            padroes_hns_encontrados)
+
+                    padroes_dtb_encontrados = identificar_padroes_double_top_bottom(
+                        pivots_detectados, df_historico)
+                    todos_os_padroes_nesta_execucao.extend(
+                        padroes_dtb_encontrados)
+
+                    if todos_os_padroes_nesta_execucao:
                         print(
-                            f"{Fore.GREEN}✅ Encontrados {len(padroes_encontrados)} padrões que passaram nas regras e atingiram o score.")
-                        for padrao in padroes_encontrados:
-                            # <<< ALTERAÇÃO 4: Adiciona a estratégia e o timeframe ao resultado >>>
+                            f"{Fore.GREEN}✅ Encontrados {len(todos_os_padroes_nesta_execucao)} padrões H&S/DT/DB que passaram nas regras e atingiram o score.")
+                        for padrao in todos_os_padroes_nesta_execucao:
                             padrao['strategy'] = strategy_name
                             padrao['timeframe'] = interval
                             padrao['ticker'] = ticker
                             todos_os_padroes_finais.append(padrao)
                     else:
                         print(
-                            "ℹ️ Nenhum padrão passou nos critérios obrigatórios ou atingiu a pontuação mínima.")
+                            "ℹ️ Nenhum padrão H&S ou DT/DB passou nos critérios ou atingiu a pontuação mínima.")
                 except Exception as e:
                     print(
                         f"{Fore.RED}❌ Erro ao processar {ticker}/{interval} na estratégia {strategy_name}: {e}")
@@ -574,14 +690,30 @@ def main():
         f"\n{Style.BRIGHT}--- Processo finalizado. Salvando dataset... ---{Style.RESET_ALL}")
 
     if not todos_os_padroes_finais:
-        print(f"{Fore.YELLOW}Nenhum padrão foi encontrado em todas as execuções.")
+        print(
+            f"{Fore.YELLOW}Nenhum padrão H&S ou DT/DB foi encontrado em todas as execuções.")
         return
 
     df_final = pd.DataFrame(todos_os_padroes_finais)
 
-    # <<< ALTERAÇÃO 5: Inclui 'strategy' na chave de identificação de duplicatas >>>
+    # Criar chave única por padrão com base no último pivô relevante
+    # Para H&S (OCO/OCOI) usamos 'cabeca_idx'; para DT/DB usamos 'p3_idx'
+    if 'cabeca_idx' not in df_final.columns:
+        df_final['cabeca_idx'] = np.nan
+    if 'p3_idx' not in df_final.columns:
+        df_final['p3_idx'] = np.nan
+    df_final['chave_idx'] = np.where(
+        df_final['padrao_tipo'].isin(['OCO', 'OCOI']),
+        df_final['cabeca_idx'],
+        df_final['p3_idx']
+    )
+
+    # Remover duplicatas usando a chave genérica
     df_final.drop_duplicates(subset=[
-        'ticker', 'timeframe', 'padrao_tipo', 'cabeca_idx'], inplace=True, keep='first')
+                             'ticker', 'timeframe', 'padrao_tipo', 'chave_idx'], inplace=True, keep='first')
+
+    # Remover coluna temporária
+    df_final.drop(columns=['chave_idx'], inplace=True)
 
     # <<< ALTERAÇÃO 6: Adiciona 'strategy' nas colunas de informação >>>
     cols_info = ['ticker', 'timeframe',

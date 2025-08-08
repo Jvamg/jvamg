@@ -82,8 +82,8 @@ class Config:
         }
     }
 
-    ARQUIVO_ENTRADA = 'data/datasets/datasets_hns_by_strategy/dataset_hns_by_strategy_final.csv'
-    ARQUIVO_SAIDA = 'data/datasets/datasets_hns_by_strategy/dataset_hns_labeled_final.csv'
+    ARQUIVO_ENTRADA = 'data/datasets/patterns_by_strategy/dataset_patterns_final.csv'
+    ARQUIVO_SAIDA = 'data/datasets/patterns_by_strategy/dataset_patterns_labeled.csv'
 
     MAX_DOWNLOAD_TENTATIVAS = 3
     RETRY_DELAY_SEGUNDOS = 5
@@ -104,13 +104,25 @@ class LabelingTool(tk.Tk):
         self.df_trabalho: Optional[pd.DataFrame] = None
         self.indice_atual: int = 0
         self.fig: Optional[plt.Figure] = None
-        self.regras_map = {
-            'valid_extremo_cabeca': 'Cabeça é o Extremo', 'valid_contexto_cabeca': 'Contexto Relevante',
-            'valid_divergencia_rsi': 'Divergência RSI', 'valid_divergencia_macd': 'Divergência MACD',
-            'valid_proeminencia_cabeca': 'Cabeça Proeminente', 'valid_simetria_ombros': 'Simetria de Ombros',
-            'valid_neckline_plana': 'Neckline Plana', 'valid_ombro_direito_fraco': 'Ombro Direito Fraco',
-            'valid_base_tendencia': 'Estrutura de Tendência', 'valid_perfil_volume': 'Perfil de Volume'
+        # Mapas de regras por tipo de padrão
+        self.regras_map_hns: Dict[str, str] = {
+            'valid_extremo_cabeca': 'Cabeça é o Extremo',
+            'valid_contexto_cabeca': 'Contexto Relevante',
+            'valid_divergencia_rsi': 'Divergência RSI',
+            'valid_divergencia_macd': 'Divergência MACD',
+            'valid_proeminencia_cabeca': 'Cabeça Proeminente',
+            'valid_simetria_ombros': 'Simetria de Ombros',
+            'valid_neckline_plana': 'Neckline Plana',
+            'valid_ombro_direito_fraco': 'Ombro Direito Fraco',
+            'valid_base_tendencia': 'Estrutura de Tendência',
+            'valid_perfil_volume': 'Perfil de Volume',
         }
+        self.regras_map_dtb: Dict[str, str] = {
+            'valid_estrutura_picos_vales': 'Estrutura de Picos e Vales',
+            'valid_simetria_extremos': 'Simetria dos Extremos',
+            'valid_profundidade_vale_pico': 'Profundidade do Vale/Pico',
+        }
+        self.max_rule_slots: int = len(self.regras_map_hns)
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
             self.destroy()
             return
@@ -301,27 +313,57 @@ class LabelingTool(tk.Tk):
     # (Copiar e colar o restante das funções sem alteração aqui)
     def setup_dataframe(self, arquivo_entrada: str, arquivo_saida: str) -> bool:
         try:
+            # Carrega o dataset (prioriza o arquivo de saída se já existir)
             if os.path.exists(arquivo_saida):
-                self.df_trabalho = pd.read_csv(arquivo_saida)
+                df = pd.read_csv(arquivo_saida)
             else:
-                self.df_trabalho = pd.read_csv(arquivo_entrada)
-            rename_map = {
-                'timeframe': 'intervalo', 'strategy': 'estrategia_zigzag',
-                'padrao_tipo': 'tipo_padrao', 'ombro1_idx': 'data_inicio',
-                'ombro2_idx': 'data_fim', 'cabeca_idx': 'data_cabeca',
-                'retest_p6_idx': 'data_retest'
-            }
-            self.df_trabalho.rename(
-                columns={k: v for k, v in rename_map.items(
-                ) if k in self.df_trabalho.columns},
-                inplace=True
-            )
+                df = pd.read_csv(arquivo_entrada)
+
+            # 1) Renomeia apenas colunas comuns
+            df.rename(columns={
+                'timeframe': 'intervalo',
+                'strategy': 'estrategia_zigzag',
+            }, inplace=True)
+
+            # Garante a presença de 'tipo_padrao'
+            if 'tipo_padrao' not in df.columns and 'padrao_tipo' in df.columns:
+                df['tipo_padrao'] = df['padrao_tipo']
+
+            num_rows = len(df)
+
+            # Helpers para obter Series existentes ou NaT
+            def series_or_nat(col_name: str) -> pd.Series:
+                if col_name in df.columns:
+                    return df[col_name]
+                return pd.Series([pd.NaT] * num_rows, index=df.index)
+
+            # 2) Cria data_inicio e data_fim de forma condicional por tipo de padrão
+            tipo_series = df['tipo_padrao'] if 'tipo_padrao' in df.columns else pd.Series(
+                [None] * num_rows, index=df.index)
+            tipo_upper = tipo_series.astype(str).str.upper()
+            is_hns = tipo_upper.isin(['OCO', 'OCOI'])
+
+            ombro1 = series_or_nat('ombro1_idx')
+            ombro2 = series_or_nat('ombro2_idx')
+            p0 = series_or_nat('p0_idx')
+            p3 = series_or_nat('p3_idx')
+
+            df['data_inicio'] = np.where(is_hns, ombro1, p0)
+            df['data_fim'] = np.where(is_hns, ombro2, p3)
+
+            # 3) Cria data_cabeca e data_retest de forma segura
+            df['data_cabeca'] = series_or_nat('cabeca_idx')
+            df['data_retest'] = series_or_nat('retest_p6_idx')
+
+            # Converte para datetime
             for col in ['data_inicio', 'data_fim', 'data_cabeca', 'data_retest']:
-                if col in self.df_trabalho.columns:
-                    self.df_trabalho[col] = pd.to_datetime(
-                        self.df_trabalho[col], errors='coerce')
-            if 'label_humano' not in self.df_trabalho.columns:
-                self.df_trabalho['label_humano'] = np.nan
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+
+            # Garante coluna de rótulo manual
+            if 'label_humano' not in df.columns:
+                df['label_humano'] = np.nan
+
+            self.df_trabalho = df
             return True
         except FileNotFoundError:
             messagebox.showerror(
@@ -374,15 +416,20 @@ class LabelingTool(tk.Tk):
         grid_frame.pack(fill=tk.BOTH, expand=True, padx=15)
         grid_frame.grid_columnconfigure(0, weight=1)
         grid_frame.grid_columnconfigure(1, weight=1)
-        self.boletim_labels = {}
-        for i, (key, name) in enumerate(self.regras_map.items()):
+        # Slots fixos baseados no conjunto H&S (maior), com labels dinâmicos
+        self.boletim_name_labels: List[tk.Label] = []
+        self.boletim_value_labels: List[tk.Label] = []
+        for i, (_, name) in enumerate(self.regras_map_hns.items()):
             col_base = 0 if i < 5 else 2
-            tk.Label(grid_frame, text=f"{name}:", font=("Segoe UI", 9), anchor="w").grid(
-                row=i % 5, column=col_base, sticky="w", padx=(0, 10))
+            name_label = tk.Label(
+                grid_frame, text=f"{name}:", font=("Segoe UI", 9), anchor="w")
+            name_label.grid(row=i % 5, column=col_base,
+                            sticky="w", padx=(0, 10))
             result_label = tk.Label(grid_frame, text="...", font=(
                 "Segoe UI", 9, "bold"), anchor="w")
             result_label.grid(row=i % 5, column=col_base + 1, sticky="w")
-            self.boletim_labels[key] = result_label
+            self.boletim_name_labels.append(name_label)
+            self.boletim_value_labels.append(result_label)
         self.score_label = tk.Label(
             frame_boletim, text="SCORE FINAL: N/A", font=("Segoe UI", 11, "bold"), fg="#1E90FF")
         self.score_label.pack(side=tk.BOTTOM, pady=5)
@@ -529,13 +576,26 @@ class LabelingTool(tk.Tk):
         self.info_label.config(text=info_text)
         score = padrao.get('score_total', 0)
         self.score_label.config(text=f"SCORE FINAL: {score:.0f} / 100")
-        for key, name in self.regras_map.items():
-            if key in self.boletim_labels:
-                status_bool = padrao.get(key, False)
-                status_text = "SIM" if status_bool else "NÃO"
-                status_color = "green" if status_bool else "red"
-                self.boletim_labels[key].config(
-                    text=status_text, fg=status_color)
+        # Seleciona o conjunto de regras conforme o tipo de padrão
+        tipo = str(padrao.get('tipo_padrao', '')).upper()
+        regras_ativas = self.regras_map_hns if tipo in [
+            'OCO', 'OCOI'] else self.regras_map_dtb
+
+        # Limpa todos os slots
+        for i in range(self.max_rule_slots):
+            self.boletim_name_labels[i].config(text="")
+            self.boletim_value_labels[i].config(text="...", fg="black")
+
+        # Preenche dinamicamente com o dicionário selecionado
+        for i, (key, nome_regra) in enumerate(regras_ativas.items()):
+            if i >= self.max_rule_slots:
+                break
+            self.boletim_name_labels[i].config(text=f"{nome_regra}:")
+            status_bool = bool(padrao.get(key, False))
+            status_text = "SIM" if status_bool else "NÃO"
+            status_color = "green" if status_bool else "red"
+            self.boletim_value_labels[i].config(
+                text=status_text, fg=status_color)
 
 
 if __name__ == '__main__':
