@@ -1,4 +1,10 @@
-# --- gerador_de_dataset.py (v20 - Lógica de Estratégias) ---
+"""Technical pattern dataset generator (H&S/Inverse H&S and DT/DB).
+
+Pipeline: download OHLCV (yfinance) → compute ZigZag pivots → validate/score
+patterns with deterministic rules → save final CSV for labeling/modeling.
+
+Run as a script to filter by tickers/strategies/intervals.
+"""
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -9,59 +15,58 @@ import time
 from colorama import Fore, Style, init
 import argparse
 
-# Inicializa o Colorama
+# Initialize Colorama
 init(autoreset=True)
 
 
 class Config:
+    """Global configuration for universe, strategies, rules, and output."""
     TICKERS = [
-        'AAVE-USD',   # Aave
-        'ADA-USD',    # Cardano
-        'ALGO-USD',   # Algorand
-        'AVAX-USD',   # Avalanche
-        'BCH-USD',    # Bitcoin Cash
-        'BNB-USD',    # BNB
-        'BTC-USD',    # Bitcoin
-        'BSV-USD',    # Bitcoin SV
-        'CHZ-USD',    # Chiliz
-        'CRO-USD',    # Cronos
-        'DOGE-USD',   # Dogecoin
-        'DOT-USD',    # Polkadot
-        'EGLD-USD',   # MultiversX
-        'EOS-USD',    # EOS
-        'ETC-USD',    # Ethereum Classic
-        'ETH-USD',    # Ethereum
-        'FIL-USD',    # Filecoin
-        'FLOW-USD',   # Flow
-        'HBAR-USD',   # Hedera
-        'ICP-USD',    # Internet Computer
-        'LDO-USD',    # Lido DAO
-        'LINK-USD',   # Chainlink
-        'LTC-USD',    # Litecoin
-        'MANA-USD',   # Decentraland
-        'MKR-USD',    # Maker
-        'NEAR-USD',   # NEAR Protocol
-        'NEO-USD',    # Neo
-        'OP-USD',     # Optimism
-        'QNT-USD',    # Quant
-        'SHIB-USD',   # Shiba Inu
-        'SNX-USD',    # Synthetix
-        'SOL-USD',    # Solana
+        'AAVE-USD',  # Aave
+        'ADA-USD',   # Cardano
+        'ALGO-USD',  # Algorand
+        'AVAX-USD',  # Avalanche
+        'BCH-USD',   # Bitcoin Cash
+        'BNB-USD',   # BNB
+        'BTC-USD',   # Bitcoin
+        'BSV-USD',   # Bitcoin SV
+        'CHZ-USD',   # Chiliz
+        'CRO-USD',   # Cronos
+        'DOGE-USD',  # Dogecoin
+        'DOT-USD',   # Polkadot
+        'EGLD-USD',  # MultiversX
+        'EOS-USD',   # EOS
+        'ETC-USD',   # Ethereum Classic
+        'ETH-USD',   # Ethereum
+        'FIL-USD',   # Filecoin
+        'FLOW-USD',  # Flow
+        'HBAR-USD',  # Hedera
+        'ICP-USD',   # Internet Computer
+        'LDO-USD',   # Lido DAO
+        'LINK-USD',  # Chainlink
+        'LTC-USD',   # Litecoin
+        'MANA-USD',  # Decentraland
+        'MKR-USD',   # Maker
+        'NEAR-USD',  # NEAR Protocol
+        'NEO-USD',   # Neo
+        'OP-USD',    # Optimism
+        'QNT-USD',   # Quant
+        'SHIB-USD',  # Shiba Inu
+        'SNX-USD',   # Synthetix
+        'SOL-USD',   # Solana
         'THETA-USD',  # Theta Network
-        'TRX-USD',    # TRON
-        'VET-USD',    # VeChain
-        'XLM-USD',    # Stellar
-        'XMR-USD',    # Monero
-        'XRP-USD',    # XRP
-        'XTZ-USD',    # Tezos
-        'ZIL-USD',    # Zilliqa
+        'TRX-USD',   # TRON
+        'VET-USD',   # VeChain
+        'XLM-USD',   # Stellar
+        'XMR-USD',   # Monero
+        'XRP-USD',   # XRP
+        'XTZ-USD',   # Tezos
+        'ZIL-USD',   # Zilliqa
     ]
     DATA_PERIOD = '5y'
 
-    # <<< ALTERAÇÃO 1: ZIGZAG_STRATEGIES agora é a fonte da verdade >>>
-    # As antigas variáveis INTERVALS e TIMEFRAME_PARAMS foram removidas.
     ZIGZAG_STRATEGIES = {
-        # ------- SCALPING (micro-estruturas) ----------
+        # ------- SCALPING (micro-structures) ----------
         'scalping_aggressive': {
             '5m':  {'depth': 3, 'deviation': 0.25}
         },
@@ -86,7 +91,7 @@ class Config:
             '1h':  {'depth': 9, 'deviation': 1.90}
         },
 
-        # ------- SWING (hor. de horas a dias) ----------
+        # ------- SWING (hours to days) ----------
         'swing_short': {
             '15m': {'depth': 8,  'deviation': 2.0},
             '1h':  {'depth': 10, 'deviation': 2.8},
@@ -115,7 +120,7 @@ class Config:
         }
     }
 
-    # --- SISTEMA DE REGRAS E PONTUAÇÃO (H&S) ---
+    # --- H&S SCORING/RULES ---
     SCORE_WEIGHTS_HNS = {
         # Regras obrigatórias
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
@@ -129,7 +134,7 @@ class Config:
     }
     MINIMUM_SCORE_HNS = 70
 
-    # --- CONFIGURAÇÕES FUTURAS: TOPO/FUNDO DUPLO (DTB) ---
+    # --- FUTURE: DOUBLE TOP/BOTTOM (DT/DB) ---
     SCORE_WEIGHTS_DTB = {
         'valid_estrutura_picos_vales': 25,
         'valid_simetria_extremos': 25,
@@ -139,7 +144,7 @@ class Config:
     DTB_SYMMETRY_TOLERANCE_FACTOR = 0.05
     DTB_VALLEY_PEAK_DEPTH_RATIO = 0.3
 
-    # Parâmetros de validação (Sem alterações)
+    # Validation parameters
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
@@ -151,36 +156,28 @@ class Config:
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
     MAX_DOWNLOAD_TENTATIVAS, RETRY_DELAY_SEGUNDOS = 3, 5
-    # <<< ALTERAÇÃO 2: Novo diretório de saída para organizar os resultados >>>
     OUTPUT_DIR = 'data/datasets/patterns_by_strategy'
     FINAL_CSV_PATH = os.path.join(OUTPUT_DIR, 'dataset_patterns_final.csv')
 
-# --- FUNÇÕES AUXILIARES (Sem alterações no corpo das funções) ---
-# buscar_dados, calcular_zigzag_oficial, is_head_extreme, check_rsi_divergence,
-# check_macd_divergence, check_volume_profile, validate_and_score_hns_pattern,
-# identificar_padroes_hns continuam exatamente as mesmas.
-# O código delas não precisa mudar, pois elas recebem os parâmetros que precisam.
+# --- Helper functions ---
 
 
 def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    """
-    Busca dados históricos ajustando o período solicitado para respeitar
-    os limites da API do Yahoo Finance.
+    """Download OHLCV from Yahoo Finance respecting interval limits.
+
+    Automatically adjusts ``period`` for intraday intervals and normalizes
+    columns to lowercase.
     """
     original_period = period
-
-    # <<< CORREÇÃO: Respeitando os limites da API do yfinance >>>
-    # A API do Yahoo Finance permite buscar no máximo 7-8 dias de dados
-    # quando a granularidade (interval) é em minutos.
     if 'mo' in interval:
         period = 'max'
     elif 'm' in interval:
-        period = '7d'  # Alterado de '60d' para '7d'
+        period = '7d'
     elif 'h' in interval:
         period = '2y'
 
     if period != original_period:
-        print(f"{Fore.YELLOW}Aviso: Período padrão '{original_period}' ajustado para '{period}' para o intervalo '{interval}' para respeitar limites da API.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Notice: period '{original_period}' adjusted to '{period}' for interval '{interval}' to respect API limits.{Style.RESET_ALL}")
 
     for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
         try:
@@ -192,24 +189,22 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
                 df.columns = [col.lower() for col in df.columns]
                 return df
             else:
-                raise ValueError("Download retornou um DataFrame vazio.")
+                raise ValueError("Download returned an empty DataFrame.")
         except Exception as e:
             if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1:
                 print(
-                    f"{Fore.YELLOW}Tentativa {tentativa + 1} falhou. Tentando novamente em {Config.RETRY_DELAY_SEGUNDOS}s...{Style.RESET_ALL}")
+                    f"{Fore.YELLOW}Attempt {tentativa + 1} failed. Retrying in {Config.RETRY_DELAY_SEGUNDOS}s...{Style.RESET_ALL}")
                 time.sleep(Config.RETRY_DELAY_SEGUNDOS)
             else:
-                # Lança uma exceção mais específica para ser capturada no loop principal
                 raise ConnectionError(
-                    f"Download falhou para {ticker}/{interval} após {Config.MAX_DOWNLOAD_TENTATIVAS} tentativas. Erro: {e}")
+                    f"Download failed for {ticker}/{interval} after {Config.MAX_DOWNLOAD_TENTATIVAS} attempts. Error: {e}")
 
-    # Este ponto não deveria ser alcançado, mas é uma boa prática ter um fallback.
     raise ConnectionError(
-        f"Falha inesperada no download para {ticker}/{interval}.")
+        f"Unexpected download failure for {ticker}/{interval}.")
 
 
 def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
-    # ... (código idêntico, usando apenas high/low)
+    """Calcula pivôs ZigZag com alternância e desvio percentual mínimo."""
     peak_series, valley_series = df['high'], df['low']
     window_size = 2 * depth + 1
     rolling_max, rolling_min = peak_series.rolling(window=window_size, center=True, min_periods=1).max(
@@ -281,7 +276,7 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
 
 
 def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int) -> bool:
-    """ Verifica se a cabeça do padrão é o ponto mais extremo num período de lookback em BARRAS. """
+    """Valida se a cabeça é extrema (máxima/mínima) numa janela em barras."""
     lookback_bars = int(avg_pivot_dist_bars *
                         Config.HEAD_EXTREME_LOOKBACK_FACTOR)
     if lookback_bars <= 0:
@@ -312,7 +307,7 @@ def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int
 
 
 def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
-    # ... (código idêntico)
+    """Detecta divergência de RSI entre p1 e p3 conforme tipo de padrão."""
     try:
         if tipo_padrao == 'OCO':
             rsi_series = ta.rsi(df['high'], length=14)
@@ -332,7 +327,7 @@ def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, t
 
 
 def check_macd_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
-    # ... (código idêntico)
+    """Detecta divergência do histograma do MACD entre p1 e p3."""
     try:
         macd = df.ta.macd(fast=12, slow=26, signal=9, append=False)
         hist_col = 'MACDh_12_26_9'
@@ -349,7 +344,7 @@ def check_macd_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, 
 
 
 def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx, p3_idx, p5_idx) -> bool:
-    # ... (código idêntico)
+    """Compara volume próximo à cabeça vs. ombro direito para confirmar padrão."""
     try:
         indices = {p['idx']: i for i, p in enumerate(pivots)}
         idx_p1, idx_p3, idx_p5 = indices.get(
@@ -366,8 +361,8 @@ def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx,
     return False
 
 
-### MUDANÇA 6: Atualizar a assinatura da função para receber p6 ###
 def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_bars):
+    """Valida e pontua OCO/OCOI aplicando regras eliminatórias e confirmatórias."""
     details = {key: False for key in Config.SCORE_WEIGHTS_HNS.keys()}
     ombro_esq, neckline1, cabeca, neckline2, ombro_dir = p1, p2, p3, p4, p5
 
@@ -408,12 +403,9 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     if not details['valid_base_tendencia']:
         return None
 
-    ### MUDANÇA 7: Implementar a nova lógica de validação para o pivô p6 ###
-    # Calcular o preço médio da neckline
+    # Reteste (p6) deve ocorrer próximo à neckline com tolerância por ATR
     neckline_price = np.mean([neckline1['preco'], neckline2['preco']])
-
-    # --- Tolerância adaptativa baseada no ATR ---
-    # Calcula ATR(14) utilizando pandas_ta
+    # Tolerância adaptativa baseada no ATR(14)
     atr_series = df_historico.ta.atr(length=14)
     # Procura o ATR no índice do p6; se não houver valor, usa o último ATR disponível
     if p6['idx'] in atr_series.index and not np.isnan(atr_series.loc[p6['idx']]):
@@ -422,32 +414,18 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
         atr_val = atr_series.dropna(
         ).iloc[-1] if not atr_series.dropna().empty else 0
 
-    # Percentual de tolerância: 25 % do ATR relativo ao preço da neckline
-    # com piso absoluto de 0,3 % para evitar valores demasiadamente pequenos
-    # tol_pct = 0.3 * atr_val / neckline_price if neckline_price else 0
-    # tol_pct = max(tol_pct, 0.01)  # mínimo de 0,3 %
-
     max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
-    # max_variation = neckline_price * 0.03
 
-    # Verificar se o preço do p6 está dentro da faixa de tolerância da neckline
     is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
-
-    # Registra o resultado da validação
     details['valid_neckline_retest_p6'] = is_close_to_neckline
-
-    # Se o reteste do p6 for a regra principal, tornamo-la eliminatória
     if not details['valid_neckline_retest_p6']:
         return None
-    # --- Fim da nova lógica ---
-
-    # --- Lógica de pontuação (com a nova regra já adicionada aos "details") ---
+    # Soma de pontuação de confirmações
     score = 0
     for rule, passed in details.items():
         if passed:
             score += Config.SCORE_WEIGHTS_HNS.get(rule, 0)
 
-    # ... (Resto da lógica de pontuação opcional permanece a mesma) ...
     if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
         details['valid_proeminencia_cabeca'] = True
         score += Config.SCORE_WEIGHTS_HNS['valid_proeminencia_cabeca']
@@ -474,7 +452,6 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
             'cabeca_idx': p3['idx'], 'cabeca_preco': p3['preco'],
             'neckline2_idx': p4['idx'], 'neckline2_preco': p4['preco'],
             'ombro2_idx': p5['idx'], 'ombro2_preco': p5['preco'],
-            ### MUDANÇA 8: Adicionar os dados de p6 ao resultado final ###
             'retest_p6_idx': p6['idx'], 'retest_p6_preco': p6['preco']
         }
         base_data.update(details)
@@ -484,7 +461,7 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
 
 
 def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataFrame) -> List[Dict[str, Any]]:
-    # ... (código idêntico)
+    """Gera janelas de 7 pivôs, identifica OCO/OCOI e valida com p6 (reteste)."""
     padroes_encontrados = []
     n = len(pivots)
     if n < 7:
@@ -505,26 +482,22 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
 
     print(
-        f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} pivôs finais possíveis (a partir do índice {start_index}).")
+        f"Analyzing only the last {Config.RECENT_PATTERNS_LOOKBACK_COUNT} possible final pivots (from index {start_index}).")
 
     for i in range(start_index, n - 6):
         janela = pivots[i:i+7]
-        # O resto da função continua exatamente igual
         p0, p1, p2, p3, p4, p5 = janela[0], janela[1], janela[2], janela[3], janela[4], janela[5]
-        ### MUDANÇA 4: Capturar o pivô p6 para o reteste ###
         p6 = janela[6]
 
         tipo_padrao = None
-        # Verifica se a janela corresponde a um padrão OCO
-        # A sequência de tipos de pivô continua a mesma, pois p6 é o reteste
+        # Check H&S (p6 is the retest)
         if all(p['tipo'] == t for p, t in zip(janela, ['VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE'])):
             tipo_padrao = 'OCO'
-        # Verifica se a janela corresponde a um padrão OCOI
+        # Check Inverse H&S
         elif all(p['tipo'] == t for p, t in zip(janela, ['PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO'])):
             tipo_padrao = 'OCOI'
 
         if tipo_padrao:
-            ### MUDANÇA 5: Passar p6 para a função de validação ###
             dados_padrao = validate_and_score_hns_pattern(
                 p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_historico, pivots, avg_pivot_dist_bars)
             if dados_padrao:
@@ -534,7 +507,7 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
 
 
 def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico):
-    """Valida e pontua padrões de Topo Duplo (DT) e Fundo Duplo (DB)."""
+    """Validate and score Double Top (DT) and Double Bottom (DB)."""
     if tipo_padrao not in ('DT', 'DB'):
         return None
 
@@ -543,7 +516,7 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico)
     preco_p0, preco_p1 = float(p0['preco']), float(p1['preco'])
     preco_p2, preco_p3 = float(p2['preco']), float(p3['preco'])
 
-    # Estrutura: tipos de pivô esperados e relações de preço básicas
+    # Structure: expected pivot types and basic price relations
     if tipo_padrao == 'DT':
         estrutura_tipos_ok = (
             p1.get('tipo') == 'PICO' and p2.get(
@@ -563,7 +536,7 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico)
     if not details['valid_estrutura_picos_vales']:
         return None
 
-    # Simetria dos extremos (p1 ~ p3) baseada na ALTURA do padrão (|p1 - p2|)
+    # Symmetry of extremes (p1 ~ p3) based on pattern height (|p1 - p2|)
     altura_padrao = abs(preco_p1 - preco_p2)
     tolerancia_preco = Config.DTB_SYMMETRY_TOLERANCE_FACTOR * altura_padrao
     details['valid_simetria_extremos'] = abs(
@@ -571,7 +544,7 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico)
     if not details['valid_simetria_extremos']:
         return None
 
-    # Profundidade do vale/pico central relativa à perna anterior (p0->p1)
+    # Depth of middle valley/peak relative to previous leg (p0->p1)
     perna_anterior = abs(preco_p1 - preco_p0)
     if tipo_padrao == 'DT':
         profundidade = preco_p1 - preco_p2
@@ -580,7 +553,7 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico)
     required = Config.DTB_VALLEY_PEAK_DEPTH_RATIO * perna_anterior
     details['valid_profundidade_vale_pico'] = perna_anterior > 0 and profundidade >= required
 
-    # Pontuação
+    # Scoring
     score = 0
     for rule, passed in details.items():
         if passed:
@@ -601,7 +574,7 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, tipo_padrao, df_historico)
 
 
 def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_historico: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Identifica padrões candidatos de Topo Duplo (DT) e Fundo Duplo (DB) e valida-os."""
+    """Slide 4-pivot windows and validate DT/DB with symmetry/depth rules."""
     padroes_encontrados: List[Dict[str, Any]] = []
     n = len(pivots)
     if n < 4:
@@ -609,7 +582,7 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
 
     start_index = max(0, n - 3 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
     print(
-        f"Analisando apenas os últimos {Config.RECENT_PATTERNS_LOOKBACK_COUNT} candidatos DT/DB (a partir do índice {start_index}).")
+        f"Analyzing only the last {Config.RECENT_PATTERNS_LOOKBACK_COUNT} DT/DB candidates (from index {start_index}).")
 
     for i in range(start_index, n - 3):
         janela = pivots[i:i+4]
@@ -632,6 +605,7 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
 
 
 def _parse_cli_args() -> argparse.Namespace:
+    """Define e interpreta os argumentos de linha de comando do gerador."""
     parser = argparse.ArgumentParser(
         description="Gerador de dataset de padrões (OCO/OCOI, DT/DB)"
     )
@@ -669,6 +643,7 @@ def _parse_cli_args() -> argparse.Namespace:
 
 
 def main():
+    """Pipeline de geração: baixar dados, detectar padrões, salvar CSV final."""
     args = _parse_cli_args()
 
     # Filtros opcionais via CLI (mantendo defaults do Config)
@@ -697,21 +672,20 @@ def main():
 
     final_csv_path = args.output if args.output else Config.FINAL_CSV_PATH
 
-    print(f"{Style.BRIGHT}--- INICIANDO MOTOR DE GERAÇÃO (v20 - Estratégias) ---")
+    print(f"{Style.BRIGHT}--- STARTING GENERATION ENGINE (v20 - Strategies) ---")
     os.makedirs(os.path.dirname(final_csv_path)
                 or Config.OUTPUT_DIR, exist_ok=True)
 
     todos_os_padroes_finais = []
 
-    # <<< ALTERAÇÃO 3: O loop principal agora itera sobre as estratégias >>>
     for strategy_name, intervals_config in strategies_dict.items():
-        print(f"\n{Style.BRIGHT}===== ESTRATÉGIA: {strategy_name.upper()} =====")
+        print(f"\n{Style.BRIGHT}===== STRATEGY: {strategy_name.upper()} =====")
         for interval, params in intervals_config.items():
             if intervals_filter and interval not in intervals_filter:
                 continue
             for ticker in selected_tickers:
                 print(
-                    f"\n--- Processando: {ticker} | Intervalo: {interval} (Estratégia: {strategy_name}) ---")
+                    f"\n--- Processing: {ticker} | Interval: {interval} (Strategy: {strategy_name}) ---")
                 try:
                     df_historico = buscar_dados(
                         ticker, Config.DATA_PERIOD, interval)
@@ -722,14 +696,13 @@ def main():
                         df_historico, params['depth'], params['deviation'])
 
                     if len(pivots_detectados) < 4:
-                        print(
-                            "ℹ️ Número insuficiente de pivôs para formar um padrão.")
+                        print("ℹ️ Not enough pivots to form a pattern.")
                         continue
 
                     todos_os_padroes_nesta_execucao: List[Dict[str, Any]] = []
 
                     if len(pivots_detectados) >= 7:
-                        print("Identificando padrões H&S com regras obrigatórias...")
+                        print("Identifying H&S patterns with hard rules...")
                         padroes_hns_encontrados = identificar_padroes_hns(
                             pivots_detectados, df_historico)
                         todos_os_padroes_nesta_execucao.extend(
@@ -742,7 +715,7 @@ def main():
 
                     if todos_os_padroes_nesta_execucao:
                         print(
-                            f"{Fore.GREEN}✅ Encontrados {len(todos_os_padroes_nesta_execucao)} padrões H&S/DT/DB que passaram nas regras e atingiram o score.")
+                            f"{Fore.GREEN}✅ Found {len(todos_os_padroes_nesta_execucao)} H&S/DT/DB patterns passing rules and score.")
                         for padrao in todos_os_padroes_nesta_execucao:
                             padrao['strategy'] = strategy_name
                             padrao['timeframe'] = interval
@@ -750,23 +723,23 @@ def main():
                             todos_os_padroes_finais.append(padrao)
                     else:
                         print(
-                            "ℹ️ Nenhum padrão H&S ou DT/DB passou nos critérios ou atingiu a pontuação mínima.")
+                            "ℹ️ No H&S or DT/DB patterns met the criteria or minimum score.")
                 except Exception as e:
                     print(
-                        f"{Fore.RED}❌ Erro ao processar {ticker}/{interval} na estratégia {strategy_name}: {e}")
+                        f"{Fore.RED}❌ Error processing {ticker}/{interval} on strategy {strategy_name}: {e}")
 
     print(
-        f"\n{Style.BRIGHT}--- Processo finalizado. Salvando dataset... ---{Style.RESET_ALL}")
+        f"\n{Style.BRIGHT}--- Finished. Saving dataset... ---{Style.RESET_ALL}")
 
     if not todos_os_padroes_finais:
         print(
-            f"{Fore.YELLOW}Nenhum padrão H&S ou DT/DB foi encontrado em todas as execuções.")
+            f"{Fore.YELLOW}No H&S or DT/DB patterns were found.")
         return
 
     df_final = pd.DataFrame(todos_os_padroes_finais)
 
-    # Criar chave única por padrão com base no último pivô relevante
-    # Para H&S (OCO/OCOI) usamos 'cabeca_idx'; para DT/DB usamos 'p3_idx'
+    # Build unique key per pattern based on last relevant pivot
+    # For H&S use 'cabeca_idx'; for DT/DB use 'p3_idx'
     if 'cabeca_idx' not in df_final.columns:
         df_final['cabeca_idx'] = np.nan
     if 'p3_idx' not in df_final.columns:
@@ -777,14 +750,13 @@ def main():
         df_final['p3_idx']
     )
 
-    # Remover duplicatas usando a chave genérica
+    # Remove duplicates using the generic key
     df_final.drop_duplicates(subset=[
                              'ticker', 'timeframe', 'padrao_tipo', 'chave_idx'], inplace=True, keep='first')
 
-    # Remover coluna temporária
+    # Drop temporary key column
     df_final.drop(columns=['chave_idx'], inplace=True)
 
-    # <<< ALTERAÇÃO 6: Adiciona 'strategy' nas colunas de informação >>>
     cols_info = ['ticker', 'timeframe',
                  'strategy', 'padrao_tipo', 'score_total']
     cols_validacao = sorted(
@@ -792,7 +764,7 @@ def main():
     cols_pontos = [
         col for col in df_final.columns if col.endswith(('_idx', '_preco'))]
 
-    # Garante que todas as colunas existentes sejam incluídas
+    # Ensure all existing columns are included
     existing_cols = set(df_final.columns)
     ordem_final = [c for c in (
         cols_info + cols_validacao + cols_pontos) if c in existing_cols]
@@ -801,7 +773,7 @@ def main():
 
     df_final.to_csv(final_csv_path, index=False,
                     date_format='%Y-%m-%d %H:%M:%S')
-    print(f"\n{Fore.GREEN}✅ Dataset final com {len(df_final)} padrões únicos salvo em: {final_csv_path}")
+    print(f"\n{Fore.GREEN}✅ Final dataset with {len(df_final)} unique patterns saved to: {final_csv_path}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,8 @@
-# anotador_gui.py (v13.2 - Controle de Densidade de Candles)
+"""GUI de rotulagem de padrões com ZigZag e indicadores (RSI/MACD).
+
+Carrega um CSV de padrões detectados, aplica zoom por densidade de candles,
+sobrepõe ZigZag e indicadores e permite rotular rapidamente (aprovar/rejeitar).
+"""
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -14,21 +18,13 @@ from typing import List, Dict, Any, Optional
 
 
 class Config:
-    """ Parâmetros de configuração centralizados para a GUI. """
+    """Centralized configuration parameters for the GUI."""
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
-    # <<< MENTOR - NOVO >>>
-    # Esta é a nossa nova "regra de ouro" para a visualização.
-    # Limitamos o número máximo de candles na tela para garantir que o gráfico
-    # seja sempre legível e que o tipo 'candle' possa ser usado sem problemas.
-    MAX_CANDLES_IN_VIEW = 450  # Um bom número para telas modernas.
-
-    # <<< MENTOR - REMOVIDO >>>
-    # A configuração PLOT_BUFFER_CONFIG foi removida. A nova abordagem baseada
-    # em contagem de candles é mais direta e eficaz, tornando a antiga obsoleta.
+    MAX_CANDLES_IN_VIEW = 450  # Maximum candles to keep the chart legible
 
     ZIGZAG_STRATEGIES = {
-        # ------- SCALPING (micro-estruturas) ----------
+        # ------- SCALPING (micro-structures) ----------
         'scalping_aggressive': {
             '5m':  {'depth': 3, 'deviation': 0.25}
         },
@@ -53,7 +49,7 @@ class Config:
             '1h':  {'depth': 9, 'deviation': 1.90}
         },
 
-        # ------- SWING (hor. de horas a dias) ----------
+        # ------- SWING (hours to days) ----------
         'swing_short': {
             '15m': {'depth': 8,  'deviation': 2.0},
             '1h':  {'depth': 10, 'deviation': 2.8},
@@ -87,24 +83,23 @@ class Config:
 
     MAX_DOWNLOAD_TENTATIVAS = 3
     RETRY_DELAY_SEGUNDOS = 5
-    # Lookback generoso para garantir que tenhamos dados suficientes para o cálculo do buffer
-    ZIGZAG_LOOKBACK_DAYS_DEFAULT = 400
-    # Aumentado para ter mais dados de contexto se necessário
-    ZIGZAG_LOOKBACK_DAYS_MINUTE = 5
+    ZIGZAG_LOOKBACK_DAYS_DEFAULT = 400  # Generous lookback for zoom calculations
+    ZIGZAG_LOOKBACK_DAYS_MINUTE = 5     # Extra context for minute intervals
 
 
 class LabelingTool(tk.Tk):
-    # __init__ e outras funções que não foram alteradas permanecem aqui...
+    """Janela principal para rotulagem de padrões e visualização."""
+
     def __init__(self, arquivo_entrada: str, arquivo_saida: str):
         super().__init__()
         self.title("Ferramenta de Anotação (v13.2 - Zoom por Densidade)")
-        # ... resto do __init__ sem alterações ...
+        # initialize window and state
         self.geometry("1300x950")
         self.arquivo_saida = arquivo_saida
         self.df_trabalho: Optional[pd.DataFrame] = None
         self.indice_atual: int = 0
         self.fig: Optional[plt.Figure] = None
-        # Mapas de regras por tipo de padrão
+        # rule maps by pattern type
         self.regras_map_hns: Dict[str, str] = {
             'valid_extremo_cabeca': 'Cabeça é o Extremo',
             'valid_contexto_cabeca': 'Contexto Relevante',
@@ -131,10 +126,10 @@ class LabelingTool(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.carregar_proximo_padrao()
 
-    # ... setup_dataframe e _setup_ui sem alterações ...
+    # setup and UI helpers
 
     def plotar_grafico_com_zigzag(self):
-        # ... (limpeza inicial do gráfico sem alterações) ...
+        """Baixa dados, aplica zoom por densidade e plota ZigZag/indicadores."""
         if self.fig is not None:
             plt.close(self.fig)
         for widget in self.frame_grafico.winfo_children():
@@ -143,7 +138,7 @@ class LabelingTool(tk.Tk):
             return
 
         padrao_info = self.df_trabalho.loc[self.indice_atual]
-        # ... (obtenção de ticker, intervalo, estrategia, params sem alterações) ...
+        # extract ticker/interval/strategy and parameters
         ticker, intervalo = padrao_info['ticker'], padrao_info['intervalo']
         estrategia = padrao_info.get('estrategia_zigzag')
         if not estrategia or not isinstance(estrategia, str):
@@ -161,7 +156,7 @@ class LabelingTool(tk.Tk):
 
         data_inicio_padrao = pd.to_datetime(
             padrao_info['data_inicio']).tz_localize(None)
-        # Preferimos a data do RETESTE se existir; caso contrário, usamos data_fim (ombro direito)
+        # prefer retest date if available; else use right-shoulder end
         data_retest_padrao = padrao_info.get('data_retest')
         if pd.notna(data_retest_padrao):
             data_fim_padrao = pd.to_datetime(
@@ -174,19 +169,17 @@ class LabelingTool(tk.Tk):
             self.marcar_e_avancar(-1)
             return
 
-        # <<< MENTOR - ALTERADO >>>
-        # A lógica de download agora precisa de um lookback maior para garantir que teremos
-        # candles suficientes para a nova lógica de buffer posicional.
+        # compute lookback to ensure enough data for zoom window
         lookback_days = (
             Config.ZIGZAG_LOOKBACK_DAYS_MINUTE if intervalo.endswith('m') and not intervalo.endswith('mo')
             else Config.ZIGZAG_LOOKBACK_DAYS_DEFAULT
         )
-        # Fazemos um download amplo primeiro. O "zoom" será feito depois, com o pandas.
+        # wide download first; zoom via pandas afterwards
 
         download_start_date = data_inicio_padrao - \
             pd.Timedelta(days=lookback_days)
 
-        # Calcula um delta mínimo para incluir o candle do reteste sem avançar muito.
+        # minimal delta to include retest bar without overshooting too much
         if intervalo.endswith('mo'):
             interval_delta = pd.Timedelta(days=31)
         elif intervalo.endswith('wk'):
@@ -205,7 +198,7 @@ class LabelingTool(tk.Tk):
 
         df_full = None
         for _ in range(Config.MAX_DOWNLOAD_TENTATIVAS):
-            # ... (lógica de download yfinance sem alterações) ...
+            # yfinance download with retries
             try:
                 df_full = yf.download(
                     tickers=ticker, start=download_start_date, end=download_end_date,
@@ -225,40 +218,39 @@ class LabelingTool(tk.Tk):
 
         df_full.index = df_full.index.tz_localize(None)
 
-        # <<< MENTOR - LÓGICA DE ZOOM COMPLETAMENTE REFEITA >>>
+        # build zoom window by candle density
         try:
-            # 1. Encontrar a POSIÇÃO (índice inteiro) do início e fim do padrão no DataFrame completo.
+            # locate start/end positions nearest to pattern dates
             start_pos = df_full.index.get_indexer(
                 [data_inicio_padrao], method='nearest')[0]
             end_pos = df_full.index.get_indexer(
                 [data_fim_padrao], method='nearest')[0]
 
-            # 2. Calcular quantos candles o padrão ocupa.
+            # number of candles in the pattern
             pattern_candle_count = end_pos - start_pos + 1
 
-            # 3. Calcular o buffer em NÚMERO DE CANDLES.
-            # Se o padrão já for maior que o nosso limite, não adicionamos buffer.
+            # compute buffer in candles (cap by MAX_CANDLES_IN_VIEW)
             buffer_candles = 0
             if pattern_candle_count < Config.MAX_CANDLES_IN_VIEW:
                 buffer_candles = (Config.MAX_CANDLES_IN_VIEW -
                                   pattern_candle_count) // 2
 
-            # 4. Calcular as posições de início e fim da nossa janela de visualização.
+            # derive final view window positions
             view_start_pos = max(0, start_pos - buffer_candles)
             view_end_pos = min(len(df_full), end_pos + buffer_candles)
 
-            # 5. Fatiar o DataFrame usando .iloc para criar nossa janela de visualização final.
+            # slice view window
             df_view = df_full.iloc[view_start_pos:view_end_pos].copy()
 
         except IndexError:
-            # Se as datas do padrão não forem encontradas nos dados baixados, marcamos como erro.
+            # if pattern dates are not found, skip to next
             self.marcar_e_avancar(-1)
             return
 
         if df_view.empty:
             self.marcar_e_avancar(-1)
             return
-        # --- FIM DA NOVA LÓGICA DE ZOOM ---
+        # end zoom logic
 
         pivots_visuais = self._calcular_zigzag(
             df_full, params['depth'], params['deviation'])
@@ -278,7 +270,7 @@ class LabelingTool(tk.Tk):
             df_view[['MACD_12_26_9', 'MACDs_12_26_9']], panel=2)
         ad_plots.extend([rsi_plot, macd_lines, macd_hist])
 
-        # Agora podemos usar 'candle' com confiança para todos os gráficos!
+        # render candlestick with overlays
         self.fig, axlist = mpf.plot(df_view, type='candle', style='yahoo', returnfig=True,
                                     figsize=(13, 10), addplot=ad_plots,
                                     panel_ratios=(10, 2, 2, 2),
@@ -286,9 +278,9 @@ class LabelingTool(tk.Tk):
                                     volume=True, volume_panel=3,
                                     warn_too_much_data=Config.MAX_CANDLES_IN_VIEW + 50)  # Avisa só se exceder muito nosso limite
 
-        # A lógica de highlight agora usa o df_view
+        # highlight uses df_view positions
         ax_price = axlist[0]
-        # Precisamos recalcular as posições relativas ao NOVO df_view
+        # recompute positions relative to df_view
         start_pos_view = df_view.index.get_indexer(
             [data_inicio_padrao], method='nearest')[0]
         end_pos_view = df_view.index.get_indexer(
@@ -309,35 +301,35 @@ class LabelingTool(tk.Tk):
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    # ... todo o resto do código (_calcular_zigzag, on_key_press, etc.) permanece igual ...
-    # (Copiar e colar o restante das funções sem alteração aqui)
+    # remaining helpers
     def setup_dataframe(self, arquivo_entrada: str, arquivo_saida: str) -> bool:
+        """Carrega o CSV e prepara colunas: datas, rótulos e renomeações."""
         try:
-            # Carrega o dataset (prioriza o arquivo de saída se já existir)
+            # load dataset (prioritize output if exists)
             if os.path.exists(arquivo_saida):
                 df = pd.read_csv(arquivo_saida)
             else:
                 df = pd.read_csv(arquivo_entrada)
 
-            # 1) Renomeia apenas colunas comuns
+            # 1) rename common columns
             df.rename(columns={
                 'timeframe': 'intervalo',
                 'strategy': 'estrategia_zigzag',
             }, inplace=True)
 
-            # Garante a presença de 'tipo_padrao'
+            # ensure 'tipo_padrao' exists
             if 'tipo_padrao' not in df.columns and 'padrao_tipo' in df.columns:
                 df['tipo_padrao'] = df['padrao_tipo']
 
             num_rows = len(df)
 
-            # Helpers para obter Series existentes ou NaT
+            # helpers to get existing series or NaT
             def series_or_nat(col_name: str) -> pd.Series:
                 if col_name in df.columns:
                     return df[col_name]
                 return pd.Series([pd.NaT] * num_rows, index=df.index)
 
-            # 2) Cria data_inicio e data_fim de forma condicional por tipo de padrão
+            # 2) create data_inicio/data_fim conditionally by pattern type
             tipo_series = df['tipo_padrao'] if 'tipo_padrao' in df.columns else pd.Series(
                 [None] * num_rows, index=df.index)
             tipo_upper = tipo_series.astype(str).str.upper()
@@ -351,15 +343,15 @@ class LabelingTool(tk.Tk):
             df['data_inicio'] = np.where(is_hns, ombro1, p0)
             df['data_fim'] = np.where(is_hns, ombro2, p3)
 
-            # 3) Cria data_cabeca e data_retest de forma segura
+            # 3) create data_cabeca/data_retest safely
             df['data_cabeca'] = series_or_nat('cabeca_idx')
             df['data_retest'] = series_or_nat('retest_p6_idx')
 
-            # Converte para datetime
+            # convert to datetime
             for col in ['data_inicio', 'data_fim', 'data_cabeca', 'data_retest']:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
 
-            # Garante coluna de rótulo manual
+            # ensure manual label column exists
             if 'label_humano' not in df.columns:
                 df['label_humano'] = np.nan
 
@@ -375,6 +367,7 @@ class LabelingTool(tk.Tk):
             return False
 
     def carregar_proximo_padrao(self):
+        """Seleciona o próximo índice sem rótulo e atualiza a visualização."""
         if self.df_trabalho is None:
             return
         indices_pendentes = self.df_trabalho[self.df_trabalho['label_humano'].isnull(
@@ -389,6 +382,7 @@ class LabelingTool(tk.Tk):
         self.atualizar_info_label()
 
     def _setup_ui(self):
+        """Constroi frames do gráfico, painel de infos e boletim de regras."""
         m = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED)
         m.pack(fill=tk.BOTH, expand=True)
         self.frame_grafico = tk.Frame(m)
@@ -416,7 +410,7 @@ class LabelingTool(tk.Tk):
         grid_frame.pack(fill=tk.BOTH, expand=True, padx=15)
         grid_frame.grid_columnconfigure(0, weight=1)
         grid_frame.grid_columnconfigure(1, weight=1)
-        # Slots fixos baseados no conjunto H&S (maior), com labels dinâmicos
+        # fixed slots (based on H&S set), dynamic labels
         self.boletim_name_labels: List[tk.Label] = []
         self.boletim_value_labels: List[tk.Label] = []
         for i, (_, name) in enumerate(self.regras_map_hns.items()):
@@ -435,6 +429,7 @@ class LabelingTool(tk.Tk):
         self.score_label.pack(side=tk.BOTTOM, pady=5)
 
     def _calcular_zigzag(self, df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
+        """Calcula pivôs visuais para sobreposição no gráfico."""
         peak_series, valley_series = df['high'], df['low']
         window_size = 2 * depth + 1
         rolling_max, rolling_min = peak_series.rolling(window=window_size, center=True, min_periods=1).max(), \
@@ -449,7 +444,7 @@ class LabelingTool(tk.Tk):
         for idx, row in candidate_valleys_df.iterrows():
             candidates.append(
                 {'idx': idx, 'preco': row[valley_series.name], 'tipo': 'VALE'})
-        # Remove duplicidades e ordena
+        # remove duplicates and sort
         candidates = sorted(
             {p['idx']: p for p in candidates}.values(), key=lambda x: x['idx'])
         if len(candidates) < 2:
@@ -472,20 +467,19 @@ class LabelingTool(tk.Tk):
                 confirmed_pivots.append(candidate)
                 last_pivot = candidate
 
-        # --- Extensão opcional ao último candle com fusão de pivô ---
+        # optional extension to last bar with pivot merge
         if Config.ZIGZAG_EXTEND_TO_LAST_BAR and confirmed_pivots:
             last_confirmed_pivot = confirmed_pivots[-1]
             last_bar = df.iloc[-1]
 
-            # Se o último candle prolongar o movimento na MESMA direção,
-            # apenas atualizamos o pivô existente. Caso contrário, criamos um novo pivô.
+            # if last bar extends same direction: update pivot; else create opposite pivot
             if last_confirmed_pivot['tipo'] == 'PICO':
-                # Movimento ainda de alta: atualiza o pico existente
+                # up move: update last high pivot
                 if last_bar['high'] > last_confirmed_pivot['preco']:
                     last_confirmed_pivot['preco'] = last_bar['high']
                     last_confirmed_pivot['idx'] = df.index[-1]
                 else:
-                    # Inverteu para baixa → cria um VALE
+                    # reversed: create a low pivot
                     potential_pivot = {
                         'idx': df.index[-1],
                         'tipo': 'VALE',
@@ -493,13 +487,13 @@ class LabelingTool(tk.Tk):
                     }
                     if potential_pivot['idx'] != last_confirmed_pivot['idx']:
                         confirmed_pivots.append(potential_pivot)
-            else:  # último pivô é VALE
-                # Movimento ainda de baixa: atualiza o vale existente
+            else:  # last pivot is a low
+                # down move: update last low pivot
                 if last_bar['low'] < last_confirmed_pivot['preco']:
                     last_confirmed_pivot['preco'] = last_bar['low']
                     last_confirmed_pivot['idx'] = df.index[-1]
                 else:
-                    # Inverteu para alta → cria um PICO
+                    # reversed: create a high pivot
                     potential_pivot = {
                         'idx': df.index[-1],
                         'tipo': 'PICO',
@@ -511,6 +505,7 @@ class LabelingTool(tk.Tk):
         return confirmed_pivots
 
     def _preparar_zigzag_plot(self, todos_os_pivots: List[Dict[str, Any]], df_view: pd.DataFrame) -> pd.Series:
+        """Intercala pivôs visíveis e interpola para uma linha contínua."""
         if df_view.empty or not todos_os_pivots:
             return pd.Series(dtype='float64', index=df_view.index)
         plot_points_dict = {}
@@ -527,7 +522,7 @@ class LabelingTool(tk.Tk):
             if p['idx'] in df_view.index:
                 plot_points_dict[p['idx']] = p['preco']
 
-        # Se o último pivô visível não estiver no final do df_view, adicionamos o último candle
+        # ensure line reaches the last visible candle
         if plot_points_dict:
             last_visible_idx = max(plot_points_dict.keys())
             if last_visible_idx != df_view.index[-1]:
@@ -544,6 +539,7 @@ class LabelingTool(tk.Tk):
         return final_series
 
     def on_key_press(self, event: tk.Event):
+        """Mapeia atalhos: A/R para rótulo e Q para sair."""
         key = event.keysym.lower()
         if key in ['a', 'r']:
             self.marcar_e_avancar(1 if key == 'a' else 0)
@@ -551,6 +547,7 @@ class LabelingTool(tk.Tk):
             self.on_closing()
 
     def marcar_e_avancar(self, label: int):
+        """Salva rótulo atual e avança para o próximo padrão."""
         if self.df_trabalho is None:
             return
         self.df_trabalho.loc[self.indice_atual, 'label_humano'] = label
@@ -559,11 +556,13 @@ class LabelingTool(tk.Tk):
         self.carregar_proximo_padrao()
 
     def on_closing(self):
+        """Fecha a aplicação e libera recursos gráficos."""
         print("Saindo...")
         plt.close('all')
         self.destroy()
 
     def atualizar_info_label(self):
+        """Atualiza painel textual com progresso, metadados e score."""
         if self.df_trabalho is None:
             return
         total = len(self.df_trabalho)
@@ -576,17 +575,17 @@ class LabelingTool(tk.Tk):
         self.info_label.config(text=info_text)
         score = padrao.get('score_total', 0)
         self.score_label.config(text=f"SCORE FINAL: {score:.0f} / 100")
-        # Seleciona o conjunto de regras conforme o tipo de padrão
+        # choose rule set by pattern type
         tipo = str(padrao.get('tipo_padrao', '')).upper()
         regras_ativas = self.regras_map_hns if tipo in [
             'OCO', 'OCOI'] else self.regras_map_dtb
 
-        # Limpa todos os slots
+        # clear bulletin slots
         for i in range(self.max_rule_slots):
             self.boletim_name_labels[i].config(text="")
             self.boletim_value_labels[i].config(text="...", fg="black")
 
-        # Preenche dinamicamente com o dicionário selecionado
+        # fill dynamically from selected rule set
         for i, (key, nome_regra) in enumerate(regras_ativas.items()):
             if i >= self.max_rule_slots:
                 break
@@ -599,7 +598,7 @@ class LabelingTool(tk.Tk):
 
 
 if __name__ == '__main__':
-    # ... (código do main sem alterações) ...
+    # main entry
     output_dir = os.path.dirname(Config.ARQUIVO_SAIDA)
     os.makedirs(output_dir, exist_ok=True)
     if not os.path.exists(Config.ARQUIVO_ENTRADA):
