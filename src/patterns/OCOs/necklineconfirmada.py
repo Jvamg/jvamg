@@ -7,15 +7,13 @@ from typing import List, Dict, Any, Optional
 import os
 import time
 from colorama import Fore, Style, init
+import argparse
 
 # Inicializa o Colorama
 init(autoreset=True)
 
 
 class Config:
-    # --- Controle de execução de padrões ---
-    # 'HNS' ativa a busca por Head & Shoulders; 'DTB' ativa a busca por Topo/Fundo Duplo
-    PATTERNS_TO_RUN = ['DTB']
     TICKERS = [
         'AAVE-USD',   # Aave
         'ADA-USD',    # Cardano
@@ -633,18 +631,85 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
     return padroes_encontrados
 
 
+def _parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Gerador de dataset de padrões (OCO/OCOI, DT/DB)"
+    )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Lista de tickers separados por vírgula (ex.: BTC-USD,ETH-USD). Default: Config.TICKERS",
+    )
+    parser.add_argument(
+        "--strategies",
+        type=str,
+        default=None,
+        help="Lista de estratégias ZigZag separadas por vírgula (ex.: swing_short,intraday_momentum). Default: todas",
+    )
+    parser.add_argument(
+        "--intervals",
+        type=str,
+        default=None,
+        help="Lista de intervalos separados por vírgula (ex.: 5m,15m,1h,4h,1d). Default: todos por estratégia",
+    )
+    parser.add_argument(
+        "--period",
+        type=str,
+        default=None,
+        help="Período do yfinance (ex.: 5y, 2y, 7d). Default: Config.DATA_PERIOD",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Caminho do CSV de saída. Default: Config.FINAL_CSV_PATH",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = _parse_cli_args()
+
+    # Filtros opcionais via CLI (mantendo defaults do Config)
+    selected_tickers = (
+        [t.strip() for t in args.tickers.split(",") if t.strip()]
+        if args.tickers
+        else Config.TICKERS
+    )
+
+    if args.period:
+        Config.DATA_PERIOD = args.period
+
+    intervals_filter = (
+        {i.strip() for i in args.intervals.split(",") if i.strip()}
+        if args.intervals
+        else None
+    )
+
+    if args.strategies:
+        wanted = {s.strip() for s in args.strategies.split(",") if s.strip()}
+        strategies_dict = {
+            name: cfg for name, cfg in Config.ZIGZAG_STRATEGIES.items() if name in wanted
+        }
+    else:
+        strategies_dict = Config.ZIGZAG_STRATEGIES
+
+    final_csv_path = args.output if args.output else Config.FINAL_CSV_PATH
+
     print(f"{Style.BRIGHT}--- INICIANDO MOTOR DE GERAÇÃO (v20 - Estratégias) ---")
-    print(f"{Style.BRIGHT}--- PADRÕES ATIVADOS: {', '.join(Config.PATTERNS_TO_RUN)} ---")
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(final_csv_path)
+                or Config.OUTPUT_DIR, exist_ok=True)
 
     todos_os_padroes_finais = []
 
     # <<< ALTERAÇÃO 3: O loop principal agora itera sobre as estratégias >>>
-    for strategy_name, intervals_config in Config.ZIGZAG_STRATEGIES.items():
+    for strategy_name, intervals_config in strategies_dict.items():
         print(f"\n{Style.BRIGHT}===== ESTRATÉGIA: {strategy_name.upper()} =====")
         for interval, params in intervals_config.items():
-            for ticker in Config.TICKERS:
+            if intervals_filter and interval not in intervals_filter:
+                continue
+            for ticker in selected_tickers:
                 print(
                     f"\n--- Processando: {ticker} | Intervalo: {interval} (Estratégia: {strategy_name}) ---")
                 try:
@@ -663,18 +728,17 @@ def main():
 
                     todos_os_padroes_nesta_execucao: List[Dict[str, Any]] = []
 
-                    if 'HNS' in Config.PATTERNS_TO_RUN and len(pivots_detectados) >= 7:
+                    if len(pivots_detectados) >= 7:
                         print("Identificando padrões H&S com regras obrigatórias...")
                         padroes_hns_encontrados = identificar_padroes_hns(
                             pivots_detectados, df_historico)
                         todos_os_padroes_nesta_execucao.extend(
                             padroes_hns_encontrados)
 
-                    if 'DTB' in Config.PATTERNS_TO_RUN:
-                        padroes_dtb_encontrados = identificar_padroes_double_top_bottom(
-                            pivots_detectados, df_historico)
-                        todos_os_padroes_nesta_execucao.extend(
-                            padroes_dtb_encontrados)
+                    padroes_dtb_encontrados = identificar_padroes_double_top_bottom(
+                        pivots_detectados, df_historico)
+                    todos_os_padroes_nesta_execucao.extend(
+                        padroes_dtb_encontrados)
 
                     if todos_os_padroes_nesta_execucao:
                         print(
@@ -735,9 +799,9 @@ def main():
 
     df_final = df_final.reindex(columns=ordem_final)
 
-    df_final.to_csv(Config.FINAL_CSV_PATH, index=False,
+    df_final.to_csv(final_csv_path, index=False,
                     date_format='%Y-%m-%d %H:%M:%S')
-    print(f"\n{Fore.GREEN}✅ Dataset final com {len(df_final)} padrões únicos salvo em: {Config.FINAL_CSV_PATH}")
+    print(f"\n{Fore.GREEN}✅ Dataset final com {len(df_final)} padrões únicos salvo em: {final_csv_path}")
 
 
 if __name__ == "__main__":
