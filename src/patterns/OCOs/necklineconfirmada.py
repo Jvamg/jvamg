@@ -312,8 +312,10 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
 
 def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int) -> bool:
     """Valida se a cabeça é extrema (máxima/mínima) numa janela em barras."""
-    base_lookback = int(avg_pivot_dist_bars * Config.HEAD_EXTREME_LOOKBACK_FACTOR)
-    lookback_bars = max(base_lookback, getattr(Config, 'HEAD_EXTREME_LOOKBACK_MIN_BARS', 30))
+    base_lookback = int(avg_pivot_dist_bars *
+                        Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+    lookback_bars = max(base_lookback, getattr(
+        Config, 'HEAD_EXTREME_LOOKBACK_MIN_BARS', 30))
     if lookback_bars <= 0:
         return True
 
@@ -967,17 +969,18 @@ def main():
 
     df_final = pd.DataFrame(todos_os_padroes_finais)
 
-    # Build unique key per pattern based on last relevant pivot
+    # Build unique key per pattern based on last relevant pivot (datetime dtype)
     # For H&S use 'cabeca_idx'; for DT/DB use 'p3_idx'
     if 'cabeca_idx' not in df_final.columns:
-        df_final['cabeca_idx'] = np.nan
+        df_final['cabeca_idx'] = pd.NaT
     if 'p3_idx' not in df_final.columns:
-        df_final['p3_idx'] = np.nan
-    df_final['chave_idx'] = np.where(
-        df_final['padrao_tipo'].isin(['OCO', 'OCOI']),
-        df_final['cabeca_idx'],
-        df_final['p3_idx']
-    )
+        df_final['p3_idx'] = pd.NaT
+    df_final['cabeca_idx'] = pd.to_datetime(
+        df_final['cabeca_idx'], errors='coerce')
+    df_final['p3_idx'] = pd.to_datetime(df_final['p3_idx'], errors='coerce')
+    mask_hns = df_final['padrao_tipo'].isin(['OCO', 'OCOI'])
+    df_final['chave_idx'] = df_final['cabeca_idx'].where(
+        mask_hns, df_final['p3_idx'])
 
     # Remove duplicates using the generic key
     df_final.drop_duplicates(subset=[
