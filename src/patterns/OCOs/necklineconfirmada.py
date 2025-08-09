@@ -139,8 +139,8 @@ class Config:
     SCORE_WEIGHTS_DTB = {
         # Regras obrigatórias
         'valid_estrutura_picos_vales': 20,
-        'valid_simetria_extremos': 20,
-        'valid_profundidade_vale_pico': 20,
+        'valid_simetria_extremos': 10,
+        'valid_profundidade_vale_pico': 15,
         'valid_contexto_extremos': 15,
         'valid_neckline_retest_p4': 10,
         # Regras opcionais
@@ -160,7 +160,8 @@ class Config:
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
-    HEAD_EXTREME_LOOKBACK_FACTOR = 3
+    HEAD_EXTREME_LOOKBACK_FACTOR = 2
+    HEAD_EXTREME_LOOKBACK_MIN_BARS = 30
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
     NECKLINE_RETEST_ATR_MULTIPLIER = 4
@@ -311,8 +312,8 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
 
 def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int) -> bool:
     """Valida se a cabeça é extrema (máxima/mínima) numa janela em barras."""
-    lookback_bars = int(avg_pivot_dist_bars *
-                        Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+    base_lookback = int(avg_pivot_dist_bars * Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+    lookback_bars = max(base_lookback, getattr(Config, 'HEAD_EXTREME_LOOKBACK_MIN_BARS', 30))
     if lookback_bars <= 0:
         return True
 
@@ -662,14 +663,14 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
                 'tipo') == 'VALE' and p3.get('tipo') == 'PICO'
         )
         relacoes_precos_ok = (preco_p1 > preco_p0) and (
-            preco_p1 > preco_p2 and preco_p3 > preco_p2) and (preco_p0 < preco_p2)
+            preco_p1 > preco_p2 and preco_p3 > preco_p2)
     else:  # 'DB'
         estrutura_tipos_ok = (
             p1.get('tipo') == 'VALE' and p2.get(
                 'tipo') == 'PICO' and p3.get('tipo') == 'VALE'
         )
         relacoes_precos_ok = (preco_p1 < preco_p0) and (
-            preco_p1 < preco_p2 and preco_p3 < preco_p2) and (preco_p0 > preco_p2)
+            preco_p1 < preco_p2 and preco_p3 < preco_p2)
 
     details['valid_estrutura_picos_vales'] = estrutura_tipos_ok and relacoes_precos_ok
     if not details['valid_estrutura_picos_vales']:
@@ -792,7 +793,8 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
             for i in range(1, n)
             if pivots[i]['idx'] in locs and pivots[i-1]['idx'] in locs
         ]
-        avg_pivot_dist_bars = np.mean(distancias_em_barras) if distancias_em_barras else 0
+        avg_pivot_dist_bars = np.mean(
+            distancias_em_barras) if distancias_em_barras else 0
     except Exception as e:
         print(f"{Fore.YELLOW}Aviso: Não foi possível calcular a distância média dos pivôs (DTB). Erro: {e}{Style.RESET_ALL}")
         avg_pivot_dist_bars = 0
