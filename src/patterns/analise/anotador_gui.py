@@ -101,21 +101,17 @@ class LabelingTool(tk.Tk):
         self.fig: Optional[plt.Figure] = None
         # rule maps by pattern type
         self.regras_map_hns: Dict[str, str] = {
-            'valid_extremo_cabeca': 'Cabeça é o Extremo',
-            'valid_contexto_cabeca': 'Contexto Relevante',
             'valid_divergencia_rsi': 'Divergência RSI',
             'valid_divergencia_macd': 'Divergência MACD',
             'valid_proeminencia_cabeca': 'Cabeça Proeminente',
-            'valid_simetria_ombros': 'Simetria de Ombros',
-            'valid_neckline_plana': 'Neckline Plana',
             'valid_ombro_direito_fraco': 'Ombro Direito Fraco',
-            'valid_base_tendencia': 'Estrutura de Tendência',
             'valid_perfil_volume': 'Perfil de Volume',
         }
         self.regras_map_dtb: Dict[str, str] = {
-            'valid_estrutura_picos_vales': 'Estrutura de Picos e Vales',
-            'valid_simetria_extremos': 'Simetria dos Extremos',
-            'valid_profundidade_vale_pico': 'Profundidade do Vale/Pico',
+            'valid_perfil_volume_decrescente': 'Perfil de Volume Decrescente',
+            'valid_divergencia_obv': 'Divergência OBV',
+            'valid_divergencia_rsi': 'Divergência RSI',
+            'valid_divergencia_macd': 'Divergência MACD',
         }
         self.max_rule_slots: int = len(self.regras_map_hns)
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
@@ -345,7 +341,10 @@ class LabelingTool(tk.Tk):
 
             # 3) create data_cabeca/data_retest safely
             df['data_cabeca'] = series_or_nat('cabeca_idx')
-            df['data_retest'] = series_or_nat('retest_p6_idx')
+            # Map retest date by pattern type: H&S uses p6, DT/DB uses p4
+            retest_hns = series_or_nat('retest_p6_idx')
+            retest_dtb = series_or_nat('p4_idx')
+            df['data_retest'] = np.where(is_hns, retest_hns, retest_dtb)
 
             # convert to datetime
             for col in ['data_inicio', 'data_fim', 'data_cabeca', 'data_retest']:

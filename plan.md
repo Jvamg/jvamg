@@ -61,4 +61,18 @@ python src/patterns/analise/anotador_gui_correto.py
 python src/patterns/analise/anotador_gui_erros.py
 ```
 
+### Testes
+- Executar todos os testes (na raiz do projeto):
+  - Windows/PowerShell: `python -m pytest -q`
+  - Alternativo (Python launcher): `py -m pytest -q`
+- Executar apenas o teste de DT/DB:
+  - `python -m pytest -q tests/test_validate_double_pattern.py`
 
+
+### Notas recentes
+- DT/DB: adicionada chave `valid_neckline_retest_p4` (15) em `Config.SCORE_WEIGHTS_DTB`.
+- DT/DB: `MINIMUM_SCORE_DTB` ajustado para 70 (antes 60).
+- DT/DB: `identificar_padroes_double_top_bottom` agora usa janelas de 5 pivôs (inclui pivô de reteste `p4`) e repassa `p4` para validação.
+- Correção: removido uso prematuro de `pivots_detectados`/`df_historico` no início de `main()` em `src/patterns/OCOs/necklineconfirmada.py`. A detecção de padrões agora é condicionada a `--patterns` apenas dentro do loop por ticker/estratégia/intervalo. Não houve mudança de interface de CLI.
+- DT/DB: adicionado modo de depuração `Config.DTB_DEBUG` (default False). Ao ativar, imprime motivo de reprovação em cada regra obrigatória e confirmação de aceitação com `score` e `details`.
+ - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.
