@@ -74,5 +74,6 @@ python src/patterns/analise/anotador_gui_erros.py
 - DT/DB: `MINIMUM_SCORE_DTB` ajustado para 70 (antes 60).
 - DT/DB: `identificar_padroes_double_top_bottom` agora usa janelas de 5 pivôs (inclui pivô de reteste `p4`) e repassa `p4` para validação.
 - Correção: removido uso prematuro de `pivots_detectados`/`df_historico` no início de `main()` em `src/patterns/OCOs/necklineconfirmada.py`. A detecção de padrões agora é condicionada a `--patterns` apenas dentro do loop por ticker/estratégia/intervalo. Não houve mudança de interface de CLI.
-- DT/DB: adicionado modo de depuração `Config.DTB_DEBUG` (default False). Ao ativar, imprime motivo de reprovação em cada regra obrigatória e confirmação de aceitação com `score` e `details`.
+ - DT/DB: adicionado modo de depuração `Config.DTB_DEBUG` (default False). Ao ativar, imprime motivo de reprovação em cada regra obrigatória e confirmação de aceitação com `score` e `details`.
+ - DT/DB: regra obrigatória `valid_contexto_extremos` — p1 e p3 devem ser extremos relevantes em janela baseada na distância média entre pivôs.
  - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.

@@ -141,6 +141,7 @@ class Config:
         'valid_estrutura_picos_vales': 20,
         'valid_simetria_extremos': 20,
         'valid_profundidade_vale_pico': 20,
+        'valid_contexto_extremos': 15,
         'valid_neckline_retest_p4': 10,
         # Regras opcionais
         'valid_perfil_volume_decrescente': 10,
@@ -640,10 +641,10 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
     return padroes_encontrados
 
 
-def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_historico):
+def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_historico, avg_pivot_dist_bars: int):
     """Validate and score Double Top (DT) and Double Bottom (DB).
 
-    p4: pivô adicional (reteste) — atualmente não utilizado na pontuação.
+    p4: pivô adicional (reteste).
     """
     if tipo_padrao not in ('DT', 'DB'):
         return None
@@ -661,20 +662,33 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
                 'tipo') == 'VALE' and p3.get('tipo') == 'PICO'
         )
         relacoes_precos_ok = (preco_p1 > preco_p0) and (
-            preco_p1 > preco_p2 and preco_p3 > preco_p2)
+            preco_p1 > preco_p2 and preco_p3 > preco_p2) and (preco_p0 < preco_p2)
     else:  # 'DB'
         estrutura_tipos_ok = (
             p1.get('tipo') == 'VALE' and p2.get(
                 'tipo') == 'PICO' and p3.get('tipo') == 'VALE'
         )
         relacoes_precos_ok = (preco_p1 < preco_p0) and (
-            preco_p1 < preco_p2 and preco_p3 < preco_p2)
+            preco_p1 < preco_p2 and preco_p3 < preco_p2) and (preco_p0 > preco_p2)
 
     details['valid_estrutura_picos_vales'] = estrutura_tipos_ok and relacoes_precos_ok
     if not details['valid_estrutura_picos_vales']:
         if debug:
             _dtb_debug(
                 f"{Fore.YELLOW}DTB debug: fail at valid_estrutura_picos_vales ({tipo_padrao}).{Style.RESET_ALL}")
+        return None
+
+    # Contexto obrigatório: p1 e p3 devem ser extremos relevantes na janela
+    try:
+        p1_context_ok = is_head_extreme(df_historico, p1, avg_pivot_dist_bars)
+        p3_context_ok = is_head_extreme(df_historico, p3, avg_pivot_dist_bars)
+    except Exception:
+        p1_context_ok, p3_context_ok = False, False
+    details['valid_contexto_extremos'] = bool(p1_context_ok and p3_context_ok)
+    if not details['valid_contexto_extremos']:
+        if debug:
+            _dtb_debug(
+                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}).{Style.RESET_ALL}")
         return None
 
     # Symmetry of extremes (p1 ~ p3) based on pattern height (|p1 - p2|)
@@ -770,6 +784,19 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
     if n < 5:
         return []
 
+    # Calcula distância média entre pivôs (em barras) para definir janela de contexto
+    try:
+        locs = pd.Series(range(len(df_historico)), index=df_historico.index)
+        distancias_em_barras = [
+            locs[pivots[i]['idx']] - locs[pivots[i-1]['idx']]
+            for i in range(1, n)
+            if pivots[i]['idx'] in locs and pivots[i-1]['idx'] in locs
+        ]
+        avg_pivot_dist_bars = np.mean(distancias_em_barras) if distancias_em_barras else 0
+    except Exception as e:
+        print(f"{Fore.YELLOW}Aviso: Não foi possível calcular a distância média dos pivôs (DTB). Erro: {e}{Style.RESET_ALL}")
+        avg_pivot_dist_bars = 0
+
     start_index = max(0, n - 4 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
     print(
         f"Analyzing only the last {Config.RECENT_PATTERNS_LOOKBACK_COUNT} DT/DB candidates (from index {start_index}).")
@@ -788,7 +815,7 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
 
         if tipo_padrao:
             dados_padrao = validate_and_score_double_pattern(
-                p0, p1, p2, p3, p4, tipo_padrao, df_historico)
+                p0, p1, p2, p3, p4, tipo_padrao, df_historico, avg_pivot_dist_bars)
             if dados_padrao:
                 padroes_encontrados.append(dados_padrao)
 
