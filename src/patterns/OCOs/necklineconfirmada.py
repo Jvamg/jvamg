@@ -142,6 +142,7 @@ class Config:
         'valid_simetria_extremos': 10,
         'valid_profundidade_vale_pico': 15,
         'valid_contexto_extremos': 15,
+        'valid_contexto_tendencia': 10,
         'valid_neckline_retest_p4': 10,
         # Regras opcionais
         'valid_perfil_volume_decrescente': 10,
@@ -152,6 +153,7 @@ class Config:
     MINIMUM_SCORE_DTB = 70
     DTB_SYMMETRY_TOLERANCE_FACTOR = 0.2
     DTB_VALLEY_PEAK_DEPTH_RATIO = 0.3
+    DTB_TREND_MIN_DIFF_FACTOR = 0.05
     DTB_DEBUG = True
     DEBUG_DIR = 'logs'
     DTB_DEBUG_FILE = os.path.join(DEBUG_DIR, 'dtb_debug.log')
@@ -697,6 +699,27 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
         if debug:
             _dtb_debug(
                 f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}).{Style.RESET_ALL}")
+        return None
+
+    # Trend context: enforce HH/HL for DT and LH/LL for DB on recent pivots
+    try:
+        # HH/HL or LH/LL with minimum separation to avoid noise
+        min_sep = Config.DTB_TREND_MIN_DIFF_FACTOR * max(1.0, abs(preco_p1 - preco_p2))
+        if tipo_padrao == 'DT':
+            hh_ok = (preco_p1 >= preco_p3 - 1e-12)  # p1 >= p3 (first top >= second top)
+            hl_ok = (preco_p2 >= preco_p0 - min_sep)  # higher low: p2 >= p0 within tolerance
+            trend_ok = hh_ok and hl_ok
+        else:  # DB
+            ll_ok = (preco_p1 <= preco_p3 + 1e-12)  # p1 <= p3 (first bottom <= second bottom)
+            lh_ok = (preco_p2 <= preco_p0 + min_sep)  # lower high: p2 <= p0 within tolerance
+            trend_ok = ll_ok and lh_ok
+    except Exception:
+        trend_ok = False
+    details['valid_contexto_tendencia'] = bool(trend_ok)
+    if not details['valid_contexto_tendencia']:
+        if debug:
+            _dtb_debug(
+                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_tendencia ({tipo_padrao}).{Style.RESET_ALL}")
         return None
 
     # Symmetry of extremes (p1 ~ p3) based on pattern height (|p1 - p2|)

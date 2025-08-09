@@ -77,4 +77,5 @@ python src/patterns/analise/anotador_gui_erros.py
  - DT/DB: adicionado modo de depuração `Config.DTB_DEBUG` (default False). Ao ativar, imprime motivo de reprovação em cada regra obrigatória e confirmação de aceitação com `score` e `details`.
  - DT/DB: regra obrigatória `valid_contexto_extremos` — p1 e p3 devem ser extremos relevantes em janela baseada na distância média entre pivôs.
  - DT/DB: janela de contexto afrouxada: `HEAD_EXTREME_LOOKBACK_FACTOR=2` com piso `HEAD_EXTREME_LOOKBACK_MIN_BARS=30` barras.
+ - DT/DB: adicionada regra obrigatória `valid_contexto_tendencia` (HH/HL para DT, LH/LL para DB) com tolerância mínima `DTB_TREND_MIN_DIFF_FACTOR=0.05` relativa à altura do padrão.
  - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.
