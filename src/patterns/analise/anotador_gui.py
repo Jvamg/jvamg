@@ -112,6 +112,7 @@ class LabelingTool(tk.Tk):
             'valid_divergencia_obv': 'Divergência OBV',
             'valid_divergencia_rsi': 'Divergência RSI',
             'valid_divergencia_macd': 'Divergência MACD',
+            'valid_segundo_topo_menor': '2º Topo menor / Fundo maior',
         }
         self.max_rule_slots: int = len(self.regras_map_hns)
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
