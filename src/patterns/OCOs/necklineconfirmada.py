@@ -141,14 +141,15 @@ class Config:
         'valid_estrutura_picos_vales': 20,
         'valid_simetria_extremos': 10,
         'valid_profundidade_vale_pico': 15,
-        'valid_contexto_extremos': 15,
-        'valid_contexto_tendencia': 10,
-        'valid_neckline_retest_p4': 10,
+        'valid_contexto_extremos': 5,
+        'valid_contexto_tendencia': 5,
+        'valid_neckline_retest_p4': 15,
         # Regras opcionais
         'valid_perfil_volume_decrescente': 10,
         'valid_divergencia_obv': 15,
-        'valid_divergencia_rsi': 15,
-        'valid_divergencia_macd': 10,
+        'valid_divergencia_rsi': 10,
+        'valid_divergencia_macd': 5,
+        'valid_segundo_topo_menor': 5,
     }
     MINIMUM_SCORE_DTB = 70
     DTB_SYMMETRY_TOLERANCE_FACTOR = 0.2
@@ -704,15 +705,16 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     # Trend context: enforce HH/HL for DT and LH/LL for DB on recent pivots
     try:
         # HH/HL or LH/LL with minimum separation to avoid noise
-        min_sep = Config.DTB_TREND_MIN_DIFF_FACTOR * max(1.0, abs(preco_p1 - preco_p2))
+        min_sep = Config.DTB_TREND_MIN_DIFF_FACTOR * \
+            max(1.0, abs(preco_p1 - preco_p2))
         if tipo_padrao == 'DT':
-            hh_ok = (preco_p1 >= preco_p3 - 1e-12)  # p1 >= p3 (first top >= second top)
-            hl_ok = (preco_p2 >= preco_p0 - min_sep)  # higher low: p2 >= p0 within tolerance
-            trend_ok = hh_ok and hl_ok
+            # higher low: p2 >= p0 within tolerance
+            hl_ok = (preco_p2 >= preco_p0 - min_sep)
+            trend_ok = hl_ok
         else:  # DB
-            ll_ok = (preco_p1 <= preco_p3 + 1e-12)  # p1 <= p3 (first bottom <= second bottom)
-            lh_ok = (preco_p2 <= preco_p0 + min_sep)  # lower high: p2 <= p0 within tolerance
-            trend_ok = ll_ok and lh_ok
+            # lower high: p2 <= p0 within tolerance
+            lh_ok = (preco_p2 <= preco_p0 + min_sep)
+            trend_ok = lh_ok
     except Exception:
         trend_ok = False
     details['valid_contexto_tendencia'] = bool(trend_ok)
@@ -780,6 +782,13 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_divergencia_macd'] = check_macd_divergence_dtb(
         df_historico, p1, p3, tipo_padrao
     )
+
+    # Optional: second top lower (DT) or second bottom higher (DB)
+    if 'valid_segundo_topo_menor' in details:
+        if tipo_padrao == 'DT' and preco_p3 < preco_p1:
+            details['valid_segundo_topo_menor'] = True
+        elif tipo_padrao == 'DB' and preco_p3 > preco_p1:
+            details['valid_segundo_topo_menor'] = True
 
     # Scoring
     score = 0
