@@ -222,6 +222,11 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 df.columns = [col.lower() for col in df.columns]
+                # Ensure timezone-naive index to avoid mixing tz-aware/naive later
+                try:
+                    df.index = df.index.tz_localize(None)
+                except Exception:
+                    pass
                 return df
             else:
                 raise ValueError("Download returned an empty DataFrame.")
@@ -684,10 +689,10 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     # Contexto obrigatório: p1 e p3 devem ser extremos relevantes na janela
     try:
         p1_context_ok = is_head_extreme(df_historico, p1, avg_pivot_dist_bars)
-        p3_context_ok = is_head_extreme(df_historico, p3, avg_pivot_dist_bars)
+        # p3_context_ok = is_head_extreme(df_historico, p3, avg_pivot_dist_bars)
     except Exception:
-        p1_context_ok, p3_context_ok = False, False
-    details['valid_contexto_extremos'] = bool(p1_context_ok and p3_context_ok)
+        p1_context_ok = False
+    details['valid_contexto_extremos'] = bool(p1_context_ok)
     if not details['valid_contexto_extremos']:
         if debug:
             _dtb_debug(
@@ -975,9 +980,18 @@ def main():
         df_final['cabeca_idx'] = pd.NaT
     if 'p3_idx' not in df_final.columns:
         df_final['p3_idx'] = pd.NaT
+    # First coerce to datetime, then strip timezone to avoid tz-aware vs naive mix
     df_final['cabeca_idx'] = pd.to_datetime(
         df_final['cabeca_idx'], errors='coerce')
     df_final['p3_idx'] = pd.to_datetime(df_final['p3_idx'], errors='coerce')
+    try:
+        df_final['cabeca_idx'] = df_final['cabeca_idx'].dt.tz_localize(None)
+    except Exception:
+        pass
+    try:
+        df_final['p3_idx'] = df_final['p3_idx'].dt.tz_localize(None)
+    except Exception:
+        pass
     mask_hns = df_final['padrao_tipo'].isin(['OCO', 'OCOI'])
     df_final['chave_idx'] = df_final['cabeca_idx'].where(
         mask_hns, df_final['p3_idx'])
