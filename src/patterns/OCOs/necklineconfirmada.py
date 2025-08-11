@@ -9,12 +9,13 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import pandas_ta as ta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import os
 import time
 import re
 from colorama import Fore, Style, init
 import argparse
+import json
 
 # Initialize Colorama
 init(autoreset=True)
@@ -123,33 +124,45 @@ class Config:
 
     # --- H&S SCORING/RULES ---
     SCORE_WEIGHTS_HNS = {
-        # Regras obrigatórias
+        # Mandatory rules
         'valid_extremo_cabeca': 20, 'valid_contexto_cabeca': 15,
         'valid_simetria_ombros': 10, 'valid_neckline_plana': 5,
         'valid_base_tendencia': 5,
         'valid_neckline_retest_p6': 15,
-        # Regras opcionais
-        'valid_divergencia_rsi': 15,
-        'valid_divergencia_macd': 10, 'valid_proeminencia_cabeca': 10,
-        'valid_ombro_direito_fraco': 5, 'valid_perfil_volume': 5
+        # Optional confirmations (updated)
+        'valid_divergencia_rsi': 10,
+        'valid_divergencia_rsi_strong': 20,
+        'valid_divergencia_macd': 10,
+        'valid_macd_signal_cross': 8,
+        'valid_estocastico_divergencia': 8,
+        'valid_estocastico_cross': 5,
+        'valid_ombro_direito_fraco': 5,
+        'valid_perfil_volume': 5,
+        'valid_volume_breakout_neckline': 10,
+        'valid_proeminencia_cabeca': 10,
     }
     MINIMUM_SCORE_HNS = 70
 
     # --- FUTURE: DOUBLE TOP/BOTTOM (DT/DB) ---
     SCORE_WEIGHTS_DTB = {
-        # Regras obrigatórias
+        # Mandatory rules
         'valid_estrutura_picos_vales': 20,
         'valid_simetria_extremos': 10,
         'valid_profundidade_vale_pico': 15,
         'valid_contexto_extremos': 5,
         'valid_contexto_tendencia': 5,
         'valid_neckline_retest_p4': 15,
-        # Regras opcionais
+        # Optional confirmations (updated)
         'valid_perfil_volume_decrescente': 10,
         'valid_divergencia_obv': 15,
-        'valid_divergencia_rsi': 10,
+        'valid_divergencia_rsi': 8,
+        'valid_divergencia_rsi_strong': 16,
         'valid_divergencia_macd': 5,
+        'valid_macd_signal_cross': 5,
+        'valid_estocastico_divergencia': 6,
+        'valid_estocastico_cross': 5,
         'valid_segundo_topo_menor': 5,
+        'valid_volume_breakout_neckline': 10,
     }
     MINIMUM_SCORE_DTB = 70
     DTB_SYMMETRY_TOLERANCE_FACTOR = 0.1
@@ -158,6 +171,53 @@ class Config:
     DTB_DEBUG = True
     DEBUG_DIR = 'logs'
     DTB_DEBUG_FILE = os.path.join(DEBUG_DIR, 'dtb_debug.log')
+
+    # --- Triple Top/Bottom (TT/TB) scoring ---
+    SCORE_WEIGHTS_TTB = {
+        # Mandatory rules
+        'valid_estrutura_picos_vales': 20,
+        'valid_simetria_extremos': 10,
+        'valid_profundidade_vale_pico': 15,
+        'valid_contexto_extremos': 5,
+        'valid_contexto_tendencia': 5,
+        'valid_neckline_retest_p6': 15,
+        # Optional confirmations (reuse DTB optional set)
+        'valid_perfil_volume_decrescente': 10,
+        'valid_divergencia_obv': 15,
+        'valid_divergencia_rsi': 8,
+        'valid_divergencia_rsi_strong': 16,
+        'valid_divergencia_macd': 5,
+        'valid_macd_signal_cross': 5,
+        'valid_estocastico_divergencia': 6,
+        'valid_estocastico_cross': 5,
+        'valid_volume_breakout_neckline': 10,
+    }
+    MINIMUM_SCORE_TTB = 70
+
+    # Indicator thresholds/config (centralized)
+    RSI_LENGTH = 14
+    RSI_OVERBOUGHT = 70
+    RSI_OVERSOLD = 30
+    RSI_STRONG_OVERBOUGHT = 80
+    RSI_STRONG_OVERSOLD = 20
+    RSI_DIVERGENCE_MIN_DELTA = 5.0
+
+    STOCH_K = 14
+    STOCH_D = 3
+    STOCH_SMOOTH_K = 3
+    STOCH_OVERBOUGHT = 80
+    STOCH_OVERSOLD = 20
+    STOCH_CROSS_LOOKBACK_BARS = 7
+    STOCH_DIVERGENCE_MIN_DELTA = 5.0
+
+    MACD_FAST = 12
+    MACD_SLOW = 26
+    MACD_SIGNAL = 9
+    MACD_SIGNAL_CROSS_LOOKBACK_BARS = 7
+
+    VOLUME_BREAKOUT_LOOKBACK_BARS = 20
+    VOLUME_BREAKOUT_MULTIPLIER = 1.8
+    BREAKOUT_SEARCH_MAX_BARS = 60
 
     # Validation parameters
     HEAD_SIGNIFICANCE_RATIO = 1.1
@@ -170,6 +230,9 @@ class Config:
     NECKLINE_RETEST_ATR_MULTIPLIER = 0.75
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
+    # Debug toggles
+    HNS_DEBUG = False
+    TTB_DEBUG = True
 
     MAX_DOWNLOAD_TENTATIVAS, RETRY_DELAY_SEGUNDOS = 3, 5
     OUTPUT_DIR = 'data/datasets/patterns_by_strategy'
@@ -352,29 +415,29 @@ def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int
 
 
 def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
-    """Detecta divergência de RSI entre p1 e p3 conforme tipo de padrão."""
+    """Detect RSI divergence between p1 and p3 according to pattern type.
+
+    Updated: Only considers divergences starting in overbought/oversold zones
+    defined in Config. Returns a simple boolean for backward compatibility.
+
+    For strength classification, use `assess_rsi_divergence_strength`.
+    """
     try:
-        if tipo_padrao == 'OCO':
-            rsi_series = ta.rsi(df['high'], length=14)
-            if p1_idx not in rsi_series.index or p3_idx not in rsi_series.index:
-                return False
-            rsi_p1, rsi_p3 = rsi_series.loc[p1_idx], rsi_series.loc[p3_idx]
-            return p3_price > p1_price and rsi_p3 < rsi_p1
-        elif tipo_padrao == 'OCOI':
-            rsi_series = ta.rsi(df['low'], length=14)
-            if p1_idx not in rsi_series.index or p3_idx not in rsi_series.index:
-                return False
-            rsi_p1, rsi_p3 = rsi_series.loc[p1_idx], rsi_series.loc[p3_idx]
-            return p3_price < p1_price and rsi_p3 > rsi_p1
+        direction = 'bearish' if tipo_padrao in ('OCO',) else 'bullish'
+        src = df['high'] if tipo_padrao == 'OCO' else df['low']
+        div, strong = assess_rsi_divergence_strength(
+            df, p1_idx, p3_idx, p1_price, p3_price, direction, src
+        )
+        return bool(div)
     except Exception:
         return False
-    return False
 
 
 def check_macd_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
     """Detecta divergência do histograma do MACD entre p1 e p3."""
     try:
-        macd = df.ta.macd(fast=12, slow=26, signal=9, append=False)
+        macd = df.ta.macd(fast=getattr(Config, 'MACD_FAST', 12), slow=getattr(
+            Config, 'MACD_SLOW', 26), signal=getattr(Config, 'MACD_SIGNAL', 9), append=False)
         hist_col = 'MACDh_12_26_9'
         if p1_idx not in macd.index or p3_idx not in macd.index:
             return False
@@ -386,6 +449,234 @@ def check_macd_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, 
     except Exception:
         return False
     return False
+
+# --- New modular indicator helpers (Epic 1 RF-001..RF-004) ---
+
+
+def assess_rsi_divergence_strength(
+    df: pd.DataFrame,
+    p1_idx,
+    p3_idx,
+    p1_price: float,
+    p3_price: float,
+    direction: str,
+    source_series: pd.Series,
+) -> Tuple[bool, bool]:
+    """Assess RSI divergence between p1 and p3 with threshold gating and strength.
+
+    - direction: 'bearish' or 'bullish'
+    - source_series: price series used to compute RSI (e.g., df['close']|df['high']|df['low'])
+
+    Returns (has_divergence, is_strong).
+    Strong divergence requires deeper zone levels or a minimum delta in RSI.
+    """
+    try:
+        rsi = ta.rsi(source_series, length=getattr(Config, 'RSI_LENGTH', 14))
+        if p1_idx not in rsi.index or p3_idx not in rsi.index:
+            return False, False
+        rsi1, rsi3 = float(rsi.loc[p1_idx]), float(rsi.loc[p3_idx])
+        if np.isnan(rsi1) or np.isnan(rsi3):
+            return False, False
+
+        overbought = getattr(Config, 'RSI_OVERBOUGHT', 70)
+        oversold = getattr(Config, 'RSI_OVERSOLD', 30)
+        strong_ob = getattr(Config, 'RSI_STRONG_OVERBOUGHT', 80)
+        strong_os = getattr(Config, 'RSI_STRONG_OVERSOLD', 20)
+        min_delta = getattr(Config, 'RSI_DIVERGENCE_MIN_DELTA', 5.0)
+
+        if direction == 'bearish':
+            # Price higher high, RSI lower high, starting from overbought
+            valid_start = rsi1 >= overbought
+            div = (p3_price > p1_price) and (rsi3 < rsi1) and valid_start
+            strong = div and (rsi1 >= strong_ob or (rsi1 - rsi3) >= min_delta)
+            return div, strong
+        else:  # bullish
+            # Price lower low, RSI higher low, starting from oversold
+            valid_start = rsi1 <= oversold
+            div = (p3_price < p1_price) and (rsi3 > rsi1) and valid_start
+            strong = div and (rsi1 <= strong_os or (rsi3 - rsi1) >= min_delta)
+            return div, strong
+    except Exception:
+        return False, False
+
+
+def detect_macd_signal_cross(
+    df: pd.DataFrame,
+    idx_ref,
+    direction: str,
+    lookback_bars: Optional[int] = None,
+) -> bool:
+    """Detect MACD line crossing the signal line near a reference index.
+
+    - direction: 'bearish' (MACD crosses below signal) or 'bullish' (above)
+    - lookback_bars: how many bars back from idx_ref we allow the cross
+    """
+    try:
+        lookback = lookback_bars if lookback_bars is not None else getattr(
+            Config, 'MACD_SIGNAL_CROSS_LOOKBACK_BARS', 7
+        )
+        macd_df = df.ta.macd(fast=getattr(Config, 'MACD_FAST', 12), slow=getattr(
+            Config, 'MACD_SLOW', 26), signal=getattr(Config, 'MACD_SIGNAL', 9), append=False)
+        if macd_df is None:
+            return False
+        macd_line = macd_df.get('MACD_12_26_9')
+        signal_line = macd_df.get('MACDs_12_26_9')
+        if macd_line is None or signal_line is None:
+            return False
+        if idx_ref not in macd_df.index:
+            return False
+        ref_pos = df.index.get_loc(idx_ref)
+        start_pos = max(0, ref_pos - lookback)
+        # Use df index to slice consistent window
+        window = df.index[start_pos:ref_pos + 1]
+        diff = (macd_line.loc[window] - signal_line.loc[window]).dropna()
+        if len(diff) < 2:
+            return False
+        prev, curr = diff.iloc[-2], diff.iloc[-1]
+        if direction == 'bearish':
+            return prev >= 0 and curr < 0
+        return prev <= 0 and curr > 0
+    except Exception:
+        return False
+
+
+def find_breakout_index(
+    df: pd.DataFrame,
+    neckline_price: float,
+    start_idx,
+    direction: str,
+    max_bars: Optional[int] = None,
+):
+    """Find the first bar after start_idx where close breaks the neckline.
+
+    - direction: 'bearish' (close < neckline) or 'bullish' (close > neckline)
+    - Returns the index label of the breakout bar or None.
+    """
+    try:
+        limit = max_bars if max_bars is not None else getattr(
+            Config, 'BREAKOUT_SEARCH_MAX_BARS', 60
+        )
+        if start_idx not in df.index:
+            return None
+        start_pos = df.index.get_loc(start_idx)
+        end_pos = min(len(df) - 1, start_pos + limit)
+        for pos in range(start_pos + 1, end_pos + 1):
+            idx = df.index[pos]
+            close_val = float(df.loc[idx, 'close'])
+            if direction == 'bearish' and close_val < neckline_price:
+                return idx
+            if direction == 'bullish' and close_val > neckline_price:
+                return idx
+        return None
+    except Exception:
+        return None
+
+
+def check_breakout_volume(
+    df: pd.DataFrame,
+    breakout_idx,
+    lookback_bars: Optional[int] = None,
+    multiplier: Optional[float] = None,
+) -> bool:
+    """Confirm expressive volume increase on the breakout candle.
+
+    Compares breakout volume vs. average volume of previous N bars.
+    """
+    try:
+        if breakout_idx not in df.index:
+            return False
+        lookback = lookback_bars if lookback_bars is not None else getattr(
+            Config, 'VOLUME_BREAKOUT_LOOKBACK_BARS', 20
+        )
+        mult = multiplier if multiplier is not None else getattr(
+            Config, 'VOLUME_BREAKOUT_MULTIPLIER', 1.8
+        )
+        pos = df.index.get_loc(breakout_idx)
+        start = max(0, pos - lookback)
+        base = df.iloc[start:pos]['volume']
+        if base.empty:
+            return False
+        base_mean = float(base.mean())
+        breakout_vol = float(df.loc[breakout_idx, 'volume'])
+        return base_mean > 0 and breakout_vol >= (mult * base_mean)
+    except Exception:
+        return False
+
+
+def check_stochastic_confirmation(
+    df: pd.DataFrame,
+    p1_idx,
+    p3_idx,
+    p1_price: float,
+    p3_price: float,
+    direction: str,
+) -> dict:
+    """Stochastic Oscillator confirmations: divergence and %K/%D cross.
+
+    Only considered if the starting value (at p1) is in overbought/oversold
+    zones (>80 or <20). Returns a dict with two boolean flags:
+    - valid_estocastico_divergencia
+    - valid_estocastico_cross
+    """
+    result = {
+        'valid_estocastico_divergencia': False,
+        'valid_estocastico_cross': False,
+    }
+    try:
+        stoch = ta.stoch(
+            high=df['high'], low=df['low'], close=df['close'],
+            k=getattr(Config, 'STOCH_K', 14),
+            d=getattr(Config, 'STOCH_D', 3),
+            smooth_k=getattr(Config, 'STOCH_SMOOTH_K', 3),
+        )
+        if stoch is None:
+            return result
+        k_col = f"STOCHk_{getattr(Config, 'STOCH_K', 14)}_{getattr(Config, 'STOCH_D', 3)}_{getattr(Config, 'STOCH_SMOOTH_K', 3)}"
+        d_col = f"STOCHd_{getattr(Config, 'STOCH_K', 14)}_{getattr(Config, 'STOCH_D', 3)}_{getattr(Config, 'STOCH_SMOOTH_K', 3)}"
+        if k_col not in stoch.columns or d_col not in stoch.columns:
+            # Some pandas_ta versions name columns without underscores; try defaults
+            k_col = 'STOCHk_14_3_3' if 'STOCHk_14_3_3' in stoch.columns else k_col
+            d_col = 'STOCHd_14_3_3' if 'STOCHd_14_3_3' in stoch.columns else d_col
+        if p1_idx not in stoch.index or p3_idx not in stoch.index:
+            return result
+        k1 = float(stoch.loc[p1_idx, k_col])
+        k3 = float(stoch.loc[p3_idx, k_col])
+        if np.isnan(k1) or np.isnan(k3):
+            return result
+
+        ob = getattr(Config, 'STOCH_OVERBOUGHT', 80)
+        os_ = getattr(Config, 'STOCH_OVERSOLD', 20)
+        min_delta = getattr(Config, 'STOCH_DIVERGENCE_MIN_DELTA', 5.0)
+
+        # Divergence only if starting in OB/OS
+        if direction == 'bearish' and k1 >= ob:
+            div = (p3_price > p1_price) and (
+                k3 < k1) and ((k1 - k3) >= min_delta)
+            result['valid_estocastico_divergencia'] = bool(div)
+        if direction == 'bullish' and k1 <= os_:
+            div = (p3_price < p1_price) and (
+                k3 > k1) and ((k3 - k1) >= min_delta)
+            result['valid_estocastico_divergencia'] = bool(div)
+
+        # Directional %K/%D cross within recent window
+        if p3_idx in stoch.index:
+            lookback = getattr(Config, 'STOCH_CROSS_LOOKBACK_BARS', 7)
+            ref_pos = df.index.get_loc(p3_idx) if p3_idx in df.index else None
+            if ref_pos is not None:
+                start_pos = max(0, ref_pos - lookback)
+                window = df.index[start_pos:ref_pos + 1]
+                k = stoch.loc[window, k_col].dropna()
+                d = stoch.loc[window, d_col].dropna()
+                diff = (k - d).dropna()
+                if len(diff) >= 2:
+                    prev, curr = diff.iloc[-2], diff.iloc[-1]
+                    if direction == 'bearish' and prev >= 0 and curr < 0 and k1 >= ob:
+                        result['valid_estocastico_cross'] = True
+                    if direction == 'bullish' and prev <= 0 and curr > 0 and k1 <= os_:
+                        result['valid_estocastico_cross'] = True
+    except Exception:
+        return result
+    return result
 
 
 def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx, p3_idx, p5_idx) -> bool:
@@ -465,28 +756,61 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     details['valid_neckline_retest_p6'] = is_close_to_neckline
     if not details['valid_neckline_retest_p6']:
         return None
+
+    # --- New indicator confirmations (Epic 1) ---
+    direction = 'bearish' if tipo_padrao == 'OCO' else 'bullish'
+
+    # RSI divergence with strength classification (threshold-gated)
+    rsi_src = df_historico['high'] if tipo_padrao == 'OCO' else df_historico['low']
+    rsi_div, rsi_strong = assess_rsi_divergence_strength(
+        df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], direction, rsi_src
+    )
+    if rsi_div:
+        details['valid_divergencia_rsi'] = True
+    if rsi_strong:
+        details['valid_divergencia_rsi_strong'] = True
+
+    # MACD histogram divergence (as before)
+    if check_macd_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
+        details['valid_divergencia_macd'] = True
+
+    # Stochastic confirmations (divergence + %K/%D cross, zone-gated)
+    stoch_flags = check_stochastic_confirmation(
+        df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], direction
+    )
+    details.update(stoch_flags)
+
+    # Breakout detection from neckline between p5 -> next bars
+    breakout_idx = find_breakout_index(
+        df_historico, neckline_price, p5['idx'], direction, getattr(
+            Config, 'BREAKOUT_SEARCH_MAX_BARS', 60)
+    )
+
+    # MACD signal cross near breakout
+    if breakout_idx is not None and detect_macd_signal_cross(df_historico, breakout_idx, direction):
+        details['valid_macd_signal_cross'] = True
+    elif detect_macd_signal_cross(df_historico, p6['idx'], direction):
+        # fallback: around retest
+        details['valid_macd_signal_cross'] = True
+
+    # Volume spike on the breakout candle
+    if breakout_idx is not None and check_breakout_volume(df_historico, breakout_idx):
+        details['valid_volume_breakout_neckline'] = True
+
+    # Existing optional checks
+    if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
+        details['valid_proeminencia_cabeca'] = True
+    if check_volume_profile(df_historico, pivots, p1['idx'], p3['idx'], p5['idx']):
+        details['valid_perfil_volume'] = True
+    if (tipo_padrao == 'OCO' and ombro_dir['preco'] < ombro_esq['preco']) or \
+       (tipo_padrao == 'OCOI' and ombro_dir['preco'] > ombro_esq['preco']):
+        details['valid_ombro_direito_fraco'] = True
+
     # Soma de pontuação de confirmações
     score = 0
     for rule, passed in details.items():
         if passed:
             score += Config.SCORE_WEIGHTS_HNS.get(rule, 0)
-
-    if altura_ombro_esq > 0 and (altura_cabeca / altura_ombro_esq >= Config.HEAD_SIGNIFICANCE_RATIO) and (altura_cabeca / altura_ombro_dir >= Config.HEAD_SIGNIFICANCE_RATIO):
-        details['valid_proeminencia_cabeca'] = True
-        score += Config.SCORE_WEIGHTS_HNS['valid_proeminencia_cabeca']
-    if check_rsi_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
-        details['valid_divergencia_rsi'] = True
-        score += Config.SCORE_WEIGHTS_HNS['valid_divergencia_rsi']
-    if check_macd_divergence(df_historico, p1['idx'], p3['idx'], p1['preco'], p3['preco'], tipo_padrao):
-        details['valid_divergencia_macd'] = True
-        score += Config.SCORE_WEIGHTS_HNS['valid_divergencia_macd']
-    if (tipo_padrao == 'OCO' and ombro_dir['preco'] < ombro_esq['preco']) or \
-       (tipo_padrao == 'OCOI' and ombro_dir['preco'] > ombro_esq['preco']):
-        details['valid_ombro_direito_fraco'] = True
-        score += Config.SCORE_WEIGHTS_HNS['valid_ombro_direito_fraco']
-    if check_volume_profile(df_historico, pivots, p1['idx'], p3['idx'], p5['idx']):
-        details['valid_perfil_volume'] = True
-        score += Config.SCORE_WEIGHTS_HNS['valid_perfil_volume']
 
     if score >= Config.MINIMUM_SCORE_HNS:
         base_data = {
@@ -514,7 +838,7 @@ def check_volume_profile_dtb(df, p0, p1, p2, p3):
         if any(idx not in df.index for idx in [idx0, idx1, idx2, idx3]):
             return False
 
-        # Garante intervalos válidos (ordem crescente)
+        # Ensure ascending intervals
         start1, end1 = (idx0, idx1) if idx0 <= idx1 else (idx1, idx0)
         start2, end2 = (idx2, idx3) if idx2 <= idx3 else (idx3, idx2)
 
@@ -524,6 +848,7 @@ def check_volume_profile_dtb(df, p0, p1, p2, p3):
         if np.isnan(vol_extremo_1) or np.isnan(vol_extremo_2):
             return False
 
+        # Expect decreasing volume into the second extreme
         return vol_extremo_2 < vol_extremo_1
     except Exception:
         return False
@@ -549,58 +874,6 @@ def check_obv_divergence_dtb(df, p1, p3, tipo_padrao):
             return obv_p3 < obv_p1
         if tipo_padrao == 'DB':
             return obv_p3 > obv_p1
-    except Exception:
-        return False
-    return False
-
-
-def check_rsi_divergence_dtb(df, p1, p3, tipo_padrao):
-    try:
-        # Gera/garante coluna RSI padrão (close)
-        df.ta.rsi(append=True)
-        rsi_col = 'RSI_14'
-        if rsi_col not in df.columns:
-            return False
-
-        idx1, idx3 = p1.get('idx'), p3.get('idx')
-        if idx1 not in df.index or idx3 not in df.index:
-            return False
-
-        rsi_p1 = df.loc[idx1, rsi_col]
-        rsi_p3 = df.loc[idx3, rsi_col]
-        if np.isnan(rsi_p1) or np.isnan(rsi_p3):
-            return False
-
-        if tipo_padrao == 'DT':
-            return rsi_p3 < rsi_p1
-        if tipo_padrao == 'DB':
-            return rsi_p3 > rsi_p1
-    except Exception:
-        return False
-    return False
-
-
-def check_macd_divergence_dtb(df, p1, p3, tipo_padrao):
-    try:
-        # Gera/garante colunas MACD; usa a linha principal
-        df.ta.macd(append=True)
-        macd_col = 'MACD_12_26_9'
-        if macd_col not in df.columns:
-            return False
-
-        idx1, idx3 = p1.get('idx'), p3.get('idx')
-        if idx1 not in df.index or idx3 not in df.index:
-            return False
-
-        macd_p1 = df.loc[idx1, macd_col]
-        macd_p3 = df.loc[idx3, macd_col]
-        if np.isnan(macd_p1) or np.isnan(macd_p3):
-            return False
-
-        if tipo_padrao == 'DT':
-            return macd_p3 < macd_p1
-        if tipo_padrao == 'DB':
-            return macd_p3 > macd_p1
     except Exception:
         return False
     return False
@@ -805,12 +1078,45 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_divergencia_obv'] = check_obv_divergence_dtb(
         df_historico, p1, p3, tipo_padrao
     )
-    details['valid_divergencia_rsi'] = check_rsi_divergence_dtb(
-        df_historico, p1, p3, tipo_padrao
+
+    # New modular indicator confirmations (Epic 1)
+    direction = 'bearish' if tipo_padrao == 'DT' else 'bullish'
+
+    # RSI divergence with strength (use close for DT/DB)
+    rsi_div, rsi_strong = assess_rsi_divergence_strength(
+        df_historico, p1.get('idx'), p3.get(
+            'idx'), preco_p1, preco_p3, direction, df_historico['close']
     )
-    details['valid_divergencia_macd'] = check_macd_divergence_dtb(
-        df_historico, p1, p3, tipo_padrao
+    if rsi_div:
+        details['valid_divergencia_rsi'] = True
+    if rsi_strong:
+        details['valid_divergencia_rsi_strong'] = True
+
+    # MACD signal cross used as confirmation for DT/DB (legacy divergence removed)
+
+    stoch_flags = check_stochastic_confirmation(
+        df_historico, p1.get('idx'), p3.get(
+            'idx'), preco_p1, preco_p3, direction
     )
+    details.update(stoch_flags)
+
+    # Breakout index: from p3 crossing neckline (p2)
+    breakout_idx = find_breakout_index(
+        df_historico, neckline_price, p3.get('idx'), direction, getattr(
+            Config, 'BREAKOUT_SEARCH_MAX_BARS', 60)
+    )
+
+    # MACD signal cross near breakout
+    if breakout_idx is not None and detect_macd_signal_cross(df_historico, breakout_idx, direction):
+        details['valid_macd_signal_cross'] = True
+        details['valid_divergencia_macd'] = True
+    elif detect_macd_signal_cross(df_historico, p4.get('idx'), direction):
+        details['valid_macd_signal_cross'] = True
+        details['valid_divergencia_macd'] = True
+
+    # Volume spike on breakout
+    if breakout_idx is not None and check_breakout_volume(df_historico, breakout_idx):
+        details['valid_volume_breakout_neckline'] = True
 
     # Optional: second top lower (DT) or second bottom higher (DB)
     if 'valid_segundo_topo_menor' in details:
@@ -892,6 +1198,238 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
     return padroes_encontrados
 
 
+# --- Triple Top/Bottom (TT/TB) detection & validation (standalone; not wired in main) ---
+
+def identificar_padroes_ttb(pivots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Detect Triple Top (TT) and Triple Bottom (TB) 7-pivot sequences.
+
+    Pattern windows (types):
+    - TT: ['VALE','PICO','VALE','PICO','VALE','PICO','VALE']
+    - TB: ['PICO','VALE','PICO','VALE','PICO','VALE','PICO']
+
+    Returns a list of pattern dicts with keys: 'padrao_tipo' and p0..p6 as 'p{k}_obj'.
+    """
+    resultados: List[Dict[str, Any]] = []
+    n = len(pivots)
+    if n < 7:
+        return resultados
+
+    for i in range(0, n - 6):
+        janela = pivots[i:i + 7]
+        tipos = [p.get('tipo') for p in janela]
+        if tipos == ['VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE']:
+            resultados.append(
+                {'padrao_tipo': 'TT', **{f'p{k}_obj': janela[k] for k in range(7)}})
+        elif tipos == ['PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO']:
+            resultados.append(
+                {'padrao_tipo': 'TB', **{f'p{k}_obj': janela[k] for k in range(7)}})
+    return resultados
+
+
+def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    """Validate and score Triple Top (TT) or Triple Bottom (TB) using DTB confirmations.
+
+    Reuses DTB confirmation helpers (RSI, MACD divergence and signal cross, Stochastic, OBV,
+    breakout volume). Returns a dict with 'padrao_tipo', 'score_total', p0..p6 *_idx/_preco and
+    'valid_*' flags. Does not integrate into the main pipeline.
+    """
+    tipo = pattern.get('padrao_tipo')
+    if tipo not in ('TT', 'TB'):
+        return None
+
+    # Unpack pivots
+    pivs = [pattern.get(f'p{k}_obj') for k in range(7)]
+    if any(p is None for p in pivs):
+        return None
+    p0, p1, p2, p3, p4, p5, p6 = pivs
+
+    # Prices
+    preco_p0 = float(p0['preco'])
+    preco_p1 = float(p1['preco'])
+    preco_p2 = float(p2['preco'])
+    preco_p3 = float(p3['preco'])
+    preco_p4 = float(p4['preco'])
+    preco_p5 = float(p5['preco'])
+    preco_p6 = float(p6['preco'])
+
+    # Avg pivot distance (bars) for context
+    try:
+        locs = pd.Series(range(len(df_historico)), index=df_historico.index)
+        dist_barras = [locs[pivs[i]['idx']] - locs[pivs[i-1]['idx']]
+                       for i in range(1, 7)]
+        avg_pivot_dist_bars = float(
+            np.mean(dist_barras)) if dist_barras else 0.0
+    except Exception:
+        avg_pivot_dist_bars = 0.0
+
+    details = {key: False for key in Config.SCORE_WEIGHTS_TTB.keys()}
+
+    # Structure check
+    if tipo == 'TT':
+        estrutura_ok = (
+            p1.get('tipo') == 'PICO' and p2.get('tipo') == 'VALE' and
+            p3.get('tipo') == 'PICO' and p4.get('tipo') == 'VALE' and
+            p5.get('tipo') == 'PICO'
+        )
+        rel_ok = (
+            preco_p1 > preco_p0 and preco_p1 > preco_p2 and
+            preco_p3 > preco_p2 and preco_p3 > preco_p4 and
+            preco_p5 > preco_p4 and preco_p5 > preco_p6
+        )
+    else:  # TB
+        estrutura_ok = (
+            p1.get('tipo') == 'VALE' and p2.get('tipo') == 'PICO' and
+            p3.get('tipo') == 'VALE' and p4.get('tipo') == 'PICO' and
+            p5.get('tipo') == 'VALE'
+        )
+        rel_ok = (
+            preco_p1 < preco_p0 and preco_p1 < preco_p2 and
+            preco_p3 < preco_p2 and preco_p3 < preco_p4 and
+            preco_p5 < preco_p4 and preco_p5 < preco_p6
+        )
+    details['valid_estrutura_picos_vales'] = bool(estrutura_ok and rel_ok)
+    if not details['valid_estrutura_picos_vales']:
+        return None
+
+    # Context extremos (reuse head extreme logic)
+    try:
+        p1_ctx = is_head_extreme(df_historico, p1, avg_pivot_dist_bars)
+    except Exception:
+        p1_ctx = False
+    details['valid_contexto_extremos'] = bool(p1_ctx)
+    if not details['valid_contexto_extremos']:
+        return None
+
+    # Trend context (HL for TT, LH for TB) with tolerance
+    try:
+        min_sep = Config.DTB_TREND_MIN_DIFF_FACTOR * \
+            max(1.0, abs(preco_p1 - preco_p2))
+        if tipo == 'TT':
+            hl1 = (preco_p2 >= preco_p0 - min_sep)
+            hl2 = (preco_p4 >= preco_p2 - min_sep)
+            trend_ok = hl1 and hl2
+        else:
+            lh1 = (preco_p2 <= preco_p0 + min_sep)
+            lh2 = (preco_p4 <= preco_p2 + min_sep)
+            trend_ok = lh1 and lh2
+    except Exception:
+        trend_ok = False
+    details['valid_contexto_tendencia'] = bool(trend_ok)
+    if not details['valid_contexto_tendencia']:
+        return None
+
+    # Symmetry across three extremes using tolerance vs pattern height
+    try:
+        tol = Config.DTB_SYMMETRY_TOLERANCE_FACTOR
+        if tipo == 'TT':
+            alturas = [abs(preco_p1 - preco_p2), abs(preco_p3 -
+                                                     preco_p4), abs(preco_p5 - preco_p6)]
+            altura_ref = np.mean(alturas) if alturas else 0.0
+            peaks = [preco_p1, preco_p3, preco_p5]
+            diff_span = max(peaks) - min(peaks)
+            details['valid_simetria_extremos'] = altura_ref > 0 and diff_span <= tol * altura_ref
+        else:
+            alturas = [abs(preco_p2 - preco_p1), abs(preco_p4 -
+                                                     preco_p3), abs(preco_p6 - preco_p5)]
+            altura_ref = np.mean(alturas) if alturas else 0.0
+            valleys = [preco_p1, preco_p3, preco_p5]
+            diff_span = max(valleys) - min(valleys)
+            details['valid_simetria_extremos'] = altura_ref > 0 and diff_span <= tol * altura_ref
+    except Exception:
+        details['valid_simetria_extremos'] = False
+    if not details['valid_simetria_extremos']:
+        return None
+
+    # Depth checks for each leg after extreme
+    try:
+        perna_anterior = abs(preco_p1 - preco_p0)
+        if tipo == 'TT':
+            d1 = preco_p1 - preco_p2
+            d2 = preco_p3 - preco_p4
+            d3 = preco_p5 - preco_p6
+        else:
+            d1 = preco_p2 - preco_p1
+            d2 = preco_p4 - preco_p3
+            d3 = preco_p6 - preco_p5
+        required = Config.DTB_VALLEY_PEAK_DEPTH_RATIO * perna_anterior
+        details['valid_profundidade_vale_pico'] = perna_anterior > 0 and all(
+            d >= required for d in [d1, d2, d3])
+    except Exception:
+        details['valid_profundidade_vale_pico'] = False
+    if not details['valid_profundidade_vale_pico']:
+        return None
+
+    # Neckline retest at p6 relative to avg(p2, p4)
+    neckline_price = float((preco_p2 + preco_p4) / 2.0)
+    atr_series = df_historico.ta.atr(length=14)
+    if p6.get('idx') in atr_series.index and not np.isnan(atr_series.loc[p6.get('idx')]):
+        atr_val = float(atr_series.loc[p6.get('idx')])
+    else:
+        atr_val = float(
+            atr_series.dropna().iloc[-1]) if not atr_series.dropna().empty else 0.0
+    max_var = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    details['valid_neckline_retest_p6'] = abs(
+        preco_p6 - neckline_price) <= max_var
+    if not details['valid_neckline_retest_p6']:
+        return None
+
+    # Optional confirmations (reuse DTB helpers)
+    details['valid_perfil_volume_decrescente'] = check_volume_profile_dtb(
+        df_historico, p0, p1, p2, p3)
+
+    details['valid_divergencia_obv'] = check_obv_divergence_dtb(
+        df_historico, p1, p5, 'DT' if tipo == 'TT' else 'DB')
+
+    direction = 'bearish' if tipo == 'TT' else 'bullish'
+    rsi_div, rsi_strong = assess_rsi_divergence_strength(
+        df_historico, p1.get('idx'), p5.get(
+            'idx'), preco_p1, preco_p5, direction, df_historico['close']
+    )
+    if rsi_div:
+        details['valid_divergencia_rsi'] = True
+    if rsi_strong:
+        details['valid_divergencia_rsi_strong'] = True
+
+    st_flags = check_stochastic_confirmation(df_historico, p1.get(
+        'idx'), p5.get('idx'), preco_p1, preco_p5, direction)
+    details.update(st_flags)
+
+    breakout_idx = find_breakout_index(df_historico, neckline_price, p6.get(
+        'idx'), direction, getattr(Config, 'BREAKOUT_SEARCH_MAX_BARS', 60))
+    if breakout_idx is not None and detect_macd_signal_cross(df_historico, breakout_idx, direction):
+        details['valid_macd_signal_cross'] = True
+        details['valid_divergencia_macd'] = True
+    elif detect_macd_signal_cross(df_historico, p6.get('idx'), direction):
+        details['valid_macd_signal_cross'] = True
+        details['valid_divergencia_macd'] = True
+
+    if breakout_idx is not None and check_breakout_volume(df_historico, breakout_idx):
+        details['valid_volume_breakout_neckline'] = True
+
+    # Scoring
+    score = 0
+    for rule, passed in details.items():
+        if passed:
+            score += Config.SCORE_WEIGHTS_TTB.get(rule, 0)
+
+    if score >= Config.MINIMUM_SCORE_TTB:
+        base = {
+            'padrao_tipo': tipo,
+            'score_total': score,
+            'p0_idx': p0['idx'], 'p0_preco': preco_p0,
+            'p1_idx': p1['idx'], 'p1_preco': preco_p1,
+            'p2_idx': p2['idx'], 'p2_preco': preco_p2,
+            'p3_idx': p3['idx'], 'p3_preco': preco_p3,
+            'p4_idx': p4['idx'], 'p4_preco': preco_p4,
+            'p5_idx': p5['idx'], 'p5_preco': preco_p5,
+            'p6_idx': p6['idx'], 'p6_preco': preco_p6,
+        }
+        base.update(details)
+        return base
+
+    return None
+
+
 def _parse_cli_args() -> argparse.Namespace:
     """Define e interpreta os argumentos de linha de comando do gerador."""
     parser = argparse.ArgumentParser(
@@ -931,7 +1469,7 @@ def _parse_cli_args() -> argparse.Namespace:
         "--patterns",
         type=str,
         default="ALL",
-        help="Tipos de padrões a serem detectados, separados por vírgula (ex: HNS,DTB). Default: ALL",
+        help="Tipos de padrões a serem detectados, separados por vírgula (ex: HNS,DTB,TTB). Default: ALL",
     )
     return parser.parse_args()
 
@@ -1009,6 +1547,31 @@ def main():
                             pivots_detectados, df_historico)
                         todos_os_padroes_nesta_execucao.extend(
                             padroes_dtb_encontrados)
+
+                    # Triple Top/Bottom integration (TT/TB)
+                    if 'ALL' in wanted_patterns or 'TTB' in wanted_patterns:
+                        print("Identifying Triple Top/Bottom (TT/TB) candidates...")
+                        candidatos_ttb = identificar_padroes_ttb(
+                            pivots_detectados)
+                        if candidatos_ttb:
+                            print(
+                                f"Found {len(candidatos_ttb)} TT/TB raw candidates. Validating...")
+                        for cand in candidatos_ttb:
+                            dados_ttb = validate_and_score_triple_pattern(
+                                cand, df_historico)
+                            if dados_ttb:
+                                # Enrich with metadata and optional columns (tipo/score)
+                                dados_ttb['strategy'] = strategy_name
+                                dados_ttb['timeframe'] = interval
+                                dados_ttb['ticker'] = ticker
+                                dados_ttb['tipo'] = dados_ttb.get(
+                                    'padrao_tipo')
+                                dados_ttb['score'] = dados_ttb.get(
+                                    'score_total')
+                                print(
+                                    f"{Fore.GREEN}TTB accepted {dados_ttb['tipo']} with score={dados_ttb['score']}{Style.RESET_ALL}")
+                                todos_os_padroes_nesta_execucao.append(
+                                    dados_ttb)
 
                     if todos_os_padroes_nesta_execucao:
                         print(

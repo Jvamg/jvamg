@@ -80,3 +80,17 @@ python src/patterns/analise/anotador_gui_erros.py
  - DT/DB: adicionada regra obrigatória `valid_contexto_tendencia` (HH/HL para DT, LH/LL para DB) com tolerância mínima `DTB_TREND_MIN_DIFF_FACTOR=0.05` relativa à altura do padrão.
 - DT/DB: logs de debug enriquecidos em `validate_and_score_double_pattern` reportando: tipos/preços dos pivôs ao falhar estrutura, janela de contexto/hi-lo ao falhar contexto, `min_sep` e preços ao falhar tendência, tolerância/altura/diff ao falhar simetria, e `ATR`, `mult`, `neckline`, `p4` e distância ao falhar reteste.
  - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.
+
+#### Epic 1: Indicadores modularizados (RF-001 a RF-004)
+- Centralizado em `Config` thresholds/pesos: RSI/RSI forte, Stochastic (K/D/smooth, zonas), lookbacks de cruzamentos, volume de breakout (N e multiplicador), janela de busca de breakout.
+- Adicionado `assess_rsi_divergence_strength(...)` com gating (>70/<30) e classificação de força (>80/<20 ou delta mínimo), usado em HNS e DTB. Mantida retrocompatibilidade de `check_rsi_divergence`.
+- Adicionado `detect_macd_signal_cross(...)` (evento separado da divergência) e pontuações específicas em `SCORE_WEIGHTS_*`.
+- Adicionado `check_stochastic_confirmation(...)` (divergência e cruzamento %K/%D), considerado apenas se partir de OB/OS.
+- Adicionado `find_breakout_index(...)` + `check_breakout_volume(...)` para validar aumento de volume no candle de rompimento da neckline.
+- `validate_and_score_hns_pattern` e `validate_and_score_double_pattern` passam a consumir os novos módulos, preservando o pipeline e colunas de saída.
+
+#### Integração TT/TB (Topo/Fundo Triplo)
+- Novas funções: `identificar_padroes_ttb(pivots)` e `validate_and_score_triple_pattern(pattern, df)` reutilizam regras/indicadores do DTB (RSI/forte, MACD divergência + signal cross, Estocástico, OBV, volume de rompimento, ATR para reteste).
+- Pipeline (`main`): quando `--patterns` inclui `TTB` (ou `ALL`), detecta candidatos TT/TB e valida, anexando ao dataset final.
+- CSV final: acrescentadas colunas `tipo` (TT/TB), `score` (espelho de `score_total`) e `pivos` (lista compacta com `_idx/_preco` dos pivôs), além das `valid_*` já existentes.
+- Logs/Debug: com `Config.DTB_DEBUG=True`, imprime motivos de reprovação/aceite e `score` para TT/TB, similar ao DTB.
