@@ -1,0 +1,14 @@
+---
+description: "Sempre atualizar o plan.md quando houver mudanças no projeto, especialmente na estrutura de padrões, fluxo de dados ou comandos de execução"
+globs: ["plan.md"]
+alwaysApply: true
+---
+
+Sempre que houver alterações significativas no projeto, especialmente em:
+- Estrutura de arquivos em src/patterns/
+- Fluxo de dados entre os componentes
+- Comandos de execução ou configurações
+- Novos recursos ou funcionalidades
+- Mudanças nos datasets ou formato de dados
+
+O arquivo plan.md DEVE ser atualizado para refletir o estado atual do projeto, mantendo a documentação sempre sincronizada com o código.

@@ -152,8 +152,8 @@ class Config:
         'valid_segundo_topo_menor': 5,
     }
     MINIMUM_SCORE_DTB = 70
-    DTB_SYMMETRY_TOLERANCE_FACTOR = 0.2
-    DTB_VALLEY_PEAK_DEPTH_RATIO = 0.3
+    DTB_SYMMETRY_TOLERANCE_FACTOR = 0.1
+    DTB_VALLEY_PEAK_DEPTH_RATIO = 0.15
     DTB_TREND_MIN_DIFF_FACTOR = 0.05
     DTB_DEBUG = True
     DEBUG_DIR = 'logs'
@@ -164,10 +164,10 @@ class Config:
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
     HEAD_EXTREME_LOOKBACK_FACTOR = 2
-    HEAD_EXTREME_LOOKBACK_MIN_BARS = 30
+    HEAD_EXTREME_LOOKBACK_MIN_BARS = 20
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
-    NECKLINE_RETEST_ATR_MULTIPLIER = 4
+    NECKLINE_RETEST_ATR_MULTIPLIER = 0.75
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
 
@@ -686,7 +686,10 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     if not details['valid_estrutura_picos_vales']:
         if debug:
             _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_estrutura_picos_vales ({tipo_padrao}).{Style.RESET_ALL}")
+                f"{Fore.YELLOW}DTB debug: fail at valid_estrutura_picos_vales ({tipo_padrao}). "
+                f"tipos=[{p0.get('tipo')},{p1.get('tipo')},{p2.get('tipo')},{p3.get('tipo')}] "
+                f"precos=[p0={preco_p0:.6f}, p1={preco_p1:.6f}, p2={preco_p2:.6f}, p3={preco_p3:.6f}]"
+                f"{Style.RESET_ALL}")
         return None
 
     # Contexto obrigatório: p1 e p3 devem ser extremos relevantes na janela
@@ -698,8 +701,27 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_contexto_extremos'] = bool(p1_context_ok)
     if not details['valid_contexto_extremos']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}).{Style.RESET_ALL}")
+            # Reproduz minimamente a janela de contexto para depuração
+            try:
+                base_lookback = int(avg_pivot_dist_bars *
+                                    Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+                lookback_bars = max(base_lookback, getattr(
+                    Config, 'HEAD_EXTREME_LOOKBACK_MIN_BARS', 30))
+                head_loc = df_historico.index.get_loc(p1['idx'])
+                start_loc = max(0, head_loc - lookback_bars)
+                end_loc = min(len(df_historico), head_loc + lookback_bars + 1)
+                context_df = df_historico.iloc[start_loc:end_loc]
+                ctx_high = context_df['high'].max(
+                ) if not context_df.empty else float('nan')
+                ctx_low = context_df['low'].min(
+                ) if not context_df.empty else float('nan')
+                _dtb_debug(
+                    f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
+                    f"lookback_bars={lookback_bars} p1_preco={preco_p1:.6f} ctx_high={ctx_high:.6f} ctx_low={ctx_low:.6f}{Style.RESET_ALL}")
+            except Exception:
+                _dtb_debug(
+                    f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
+                    f"[context window calc error]{Style.RESET_ALL}")
         return None
 
     # Trend context: enforce HH/HL for DT and LH/LL for DB on recent pivots
@@ -721,19 +743,21 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     if not details['valid_contexto_tendencia']:
         if debug:
             _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_tendencia ({tipo_padrao}).{Style.RESET_ALL}")
+                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_tendencia ({tipo_padrao}). "
+                f"p0={preco_p0:.6f} p1={preco_p1:.6f} p2={preco_p2:.6f} min_sep={min_sep:.9f}{Style.RESET_ALL}")
         return None
 
     # Symmetry of extremes (p1 ~ p3) based on pattern height (|p1 - p2|)
     altura_padrao = abs(preco_p1 - preco_p2)
     tolerancia_preco = Config.DTB_SYMMETRY_TOLERANCE_FACTOR * altura_padrao
-    details['valid_simetria_extremos'] = abs(
-        preco_p1 - preco_p3) <= tolerancia_preco
+    diff_picos = abs(preco_p1 - preco_p3)
+    details['valid_simetria_extremos'] = diff_picos <= tolerancia_preco
     if not details['valid_simetria_extremos']:
         if debug:
-            diff = abs(preco_p1 - preco_p3)
             _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_simetria_extremos ({tipo_padrao}). tol={tolerancia_preco:.6f} diff={diff:.6f}{Style.RESET_ALL}")
+                f"{Fore.YELLOW}DTB debug: fail at valid_simetria_extremos ({tipo_padrao}). "
+                f"tol={tolerancia_preco:.9f} diff={diff_picos:.9f} altura={altura_padrao:.9f} "
+                f"p1={preco_p1:.6f} p3={preco_p3:.6f}{Style.RESET_ALL}")
         return None
 
     # Depth of middle valley/peak relative to previous leg (p0->p1)
@@ -747,7 +771,9 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     if not details['valid_profundidade_vale_pico']:
         if debug:
             _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_profundidade_vale_pico ({tipo_padrao}). profundidade={profundidade:.6f} required={required:.6f}{Style.RESET_ALL}")
+                f"{Fore.YELLOW}DTB debug: fail at valid_profundidade_vale_pico ({tipo_padrao}). "
+                f"profundidade={profundidade:.6f} required={required:.6f} perna_anterior={perna_anterior:.6f} "
+                f"ratio_req={Config.DTB_VALLEY_PEAK_DEPTH_RATIO:.3f}{Style.RESET_ALL}")
         return None
 
     # Mandatory: p4 must be a valid retest of the neckline (defined by p2)
@@ -760,13 +786,16 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
         ).iloc[-1] if not atr_series.dropna().empty else 0
 
     max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
-    inside_tolerance = abs(float(p4.get('preco')) -
-                           neckline_price) <= max_variation
+    dist_neck = abs(float(p4.get('preco')) - neckline_price)
+    inside_tolerance = dist_neck <= max_variation
     details['valid_neckline_retest_p4'] = inside_tolerance
     if not details['valid_neckline_retest_p4']:
         if debug:
             _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_neckline_retest_p4 ({tipo_padrao}). inside_tol={inside_tolerance} atr*mult={max_variation:.6f}{Style.RESET_ALL}")
+                f"{Fore.YELLOW}DTB debug: fail at valid_neckline_retest_p4 ({tipo_padrao}). "
+                f"inside_tol={inside_tolerance} atr={atr_val:.6f} mult={Config.NECKLINE_RETEST_ATR_MULTIPLIER:.3f} "
+                f"atr*mult={max_variation:.6f} neckline={neckline_price:.6f} p4={float(p4.get('preco')):.6f} "
+                f"dist={dist_neck:.6f}{Style.RESET_ALL}")
         return None
 
     # Optional confirmations (volume profile and divergences)
