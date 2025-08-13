@@ -15,7 +15,7 @@ import time
 import re
 from colorama import Fore, Style, init
 import argparse
-import json
+import logging  # Fix: implementar logging padrão
 
 # Initialize Colorama
 init(autoreset=True)
@@ -161,14 +161,14 @@ class Config:
         'valid_macd_signal_cross': 5,
         'valid_estocastico_divergencia': 6,
         'valid_estocastico_cross': 5,
-        'valid_segundo_topo_menor': 5,
+        'valid_extremo_secundario_fraco': 5,
         'valid_volume_breakout_neckline': 10,
     }
     MINIMUM_SCORE_DTB = 70
     DTB_SYMMETRY_TOLERANCE_FACTOR = 0.1
     DTB_VALLEY_PEAK_DEPTH_RATIO = 0.15
     DTB_TREND_MIN_DIFF_FACTOR = 0.05
-    DTB_DEBUG = True
+
     DEBUG_DIR = 'logs'
     DTB_DEBUG_FILE = os.path.join(DEBUG_DIR, 'dtb_debug.log')
 
@@ -209,11 +209,16 @@ class Config:
     STOCH_OVERSOLD = 20
     STOCH_CROSS_LOOKBACK_BARS = 7
     STOCH_DIVERGENCE_MIN_DELTA = 5.0
+    # New: optional gating for stochastic divergence to start in OB/OS zones
+    # Fix: make OB/OS requirement configurable
+    STOCH_DIVERGENCE_REQUIRES_OBOS = True
 
     MACD_FAST = 12
     MACD_SLOW = 26
     MACD_SIGNAL = 9
     MACD_SIGNAL_CROSS_LOOKBACK_BARS = 7
+    # Fix: flexibilizar idade máxima do cruzamento MACD aceito
+    MACD_CROSS_MAX_AGE_BARS = 3
 
     VOLUME_BREAKOUT_LOOKBACK_BARS = 20
     VOLUME_BREAKOUT_MULTIPLIER = 1.8
@@ -227,12 +232,16 @@ class Config:
     HEAD_EXTREME_LOOKBACK_MIN_BARS = 20
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
-    NECKLINE_RETEST_ATR_MULTIPLIER = 0.75
+    NECKLINE_RETEST_ATR_MULTIPLIER = 4
 
     ZIGZAG_EXTEND_TO_LAST_BAR = True
+    # Fix: fator de desvio mínimo para pivô de extensão parametrizado
+    ZIGZAG_EXTENSION_DEVIATION_FACTOR = 0.25
     # Debug toggles
     HNS_DEBUG = False
-    TTB_DEBUG = True
+    DTB_DEBUG = False
+    # Default verbose debug disabled for TT/TB
+    TTB_DEBUG = True  # Fix: disable noisy debug by default
 
     MAX_DOWNLOAD_TENTATIVAS, RETRY_DELAY_SEGUNDOS = 3, 5
     OUTPUT_DIR = 'data/datasets/patterns_by_strategy'
@@ -241,26 +250,139 @@ class Config:
 # --- Helper functions ---
 
 
-def _dtb_debug(msg: str) -> None:
-    """Prints DT/DB debug message and appends a sanitized copy to a single log file.
+def _pattern_debug(pattern_type: str, msg: str) -> None:
+    """Pattern-wide debug emitter using per-pattern flags and files.
 
-    - Respects Config.DTB_DEBUG (no-op if False)
-    - Writes to Config.DTB_DEBUG_FILE (creates directory if needed)
-    - Strips ANSI color codes for file output
+    - Uses `Config.HNS_DEBUG`, `Config.DTB_DEBUG`, `Config.TTB_DEBUG`
+    - Persists sanitized messages into per-pattern files under `Config.DEBUG_DIR`:
+      - HNS → hns_debug.log
+      - DT/DB → dtb_debug.log (keeps `Config.DTB_DEBUG_FILE` if present)
+      - TT/TB → ttb_debug.log
+    - Fix: unified debug helper for all patterns; uses logging.debug()
     """
-    if not getattr(Config, 'DTB_DEBUG', False):
-        return
-    # Print to console (keep colors)
-    print(msg)
     try:
-        os.makedirs(getattr(Config, 'DEBUG_DIR', 'logs'), exist_ok=True)
+        group = None
+        enabled = False
+        # Map tipo do padrão (OCO/OCOI, DT/DB, TT/TB) para grupo/bandeira
+        if pattern_type in ('OCO', 'OCOI'):
+            group = 'HNS'
+            enabled = bool(getattr(Config, 'HNS_DEBUG', False))
+        elif pattern_type in ('DT', 'DB'):
+            group = 'DTB'
+            enabled = bool(getattr(Config, 'DTB_DEBUG', False))
+        elif pattern_type in ('TT', 'TB'):
+            group = 'TTB'
+            enabled = bool(getattr(Config, 'TTB_DEBUG', False))
+        else:
+            # Unknown pattern, do nothing by default
+            enabled = False
+
+        if not enabled:
+            return
+
+        # Emit via logger (debug level)
+        logging.debug(msg)
+
+        # Persist sanitized copy into per-pattern file
+        debug_dir = getattr(Config, 'DEBUG_DIR', 'logs')
+        os.makedirs(debug_dir, exist_ok=True)
         sanitized = re.sub(r'\x1b\[[0-9;]*m', '', msg)
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        with open(getattr(Config, 'DTB_DEBUG_FILE', os.path.join('logs', 'dtb_debug.log')), 'a', encoding='utf-8') as f:
-            f.write(f"[{timestamp}] {sanitized}\n")
+
+        if group == 'DTB':
+            # Keep backward-compatible DTB log path if configured
+            filepath = getattr(Config, 'DTB_DEBUG_FILE',
+                               os.path.join(debug_dir, 'dtb_debug.log'))
+        elif group == 'HNS':
+            filepath = os.path.join(debug_dir, 'hns_debug.log')
+        elif group == 'TTB':
+            filepath = os.path.join(debug_dir, 'ttb_debug.log')
+        else:
+            filepath = os.path.join(debug_dir, 'patterns_debug.log')
+
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(f"{sanitized}\n")
     except Exception:
-        # Silent fail for logging to avoid breaking pipeline
+        # Silent fail for debugging to avoid breaking pipeline
         pass
+
+
+def calcular_indicadores(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute and cache technical indicators once per dataset.
+
+    Adds columns (when possible):
+    - RSI_{len}_CLOSE, RSI_{len}_HIGH, RSI_{len}_LOW
+    - MACD_{fast}_{slow}_{signal}, MACDh_{fast}_{slow}_{signal}, MACDs_{fast}_{slow}_{signal}
+    - STOCHk_{k}_{d}_{smooth_k}, STOCHd_{k}_{d}_{smooth_k}
+    - OBV
+    - ATR_14
+    """
+    try:
+        # RSI (close, high, low)
+        rsi_len = getattr(Config, 'RSI_LENGTH', 14)
+        try:
+            df[f'RSI_{rsi_len}_CLOSE'] = ta.rsi(df['close'], length=rsi_len)
+        except Exception:
+            pass
+        try:
+            df[f'RSI_{rsi_len}_HIGH'] = ta.rsi(df['high'], length=rsi_len)
+        except Exception:
+            pass
+        try:
+            df[f'RSI_{rsi_len}_LOW'] = ta.rsi(df['low'], length=rsi_len)
+        except Exception:
+            pass
+
+        # MACD (close)
+        try:
+            macd_fast = getattr(Config, 'MACD_FAST', 12)
+            macd_slow = getattr(Config, 'MACD_SLOW', 26)
+            macd_signal = getattr(Config, 'MACD_SIGNAL', 9)
+            macd_df = df.ta.macd(fast=macd_fast, slow=macd_slow,
+                                 signal=macd_signal, append=False)
+            if macd_df is not None:
+                for col in macd_df.columns:
+                    df[col] = macd_df[col]
+        except Exception:
+            pass
+
+        # Stochastic Oscillator
+        try:
+            k = getattr(Config, 'STOCH_K', 14)
+            d = getattr(Config, 'STOCH_D', 3)
+            smooth_k = getattr(Config, 'STOCH_SMOOTH_K', 3)
+            stoch_df = df.ta.stoch(
+                high=df['high'], low=df['low'], close=df['close'], k=k, d=d, smooth_k=smooth_k)
+            if stoch_df is not None:
+                for col in stoch_df.columns:
+                    df[col] = stoch_df[col]
+        except Exception:
+            pass
+
+        # OBV
+        try:
+            obv_series = df.ta.obv(append=False)
+            if obv_series is not None:
+                # May return Series; attach as 'OBV'
+                try:
+                    df['OBV'] = obv_series if hasattr(
+                        obv_series, 'name') else obv_series
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # ATR
+        try:
+            atr_series = df.ta.atr(length=14, append=False)
+            if atr_series is not None and not atr_series.empty:
+                df['ATR_14'] = atr_series.squeeze()
+        except Exception:
+            pass
+    except Exception:
+        # Never break the pipeline due to indicator caching
+        pass
+
+    return df
 
 
 def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
@@ -278,7 +400,11 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
         period = '2y'
 
     if period != original_period:
-        print(f"{Fore.YELLOW}Notice: period '{original_period}' adjusted to '{period}' for interval '{interval}' to respect API limits.{Style.RESET_ALL}")
+        # Fix: substituir print por logging
+        logging.warning(
+            "Notice: period '%s' adjusted to '%s' for interval '%s' to respect API limits.",
+            original_period, period, interval,
+        )
 
     for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
         try:
@@ -298,8 +424,11 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
                 raise ValueError("Download returned an empty DataFrame.")
         except Exception as e:
             if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1:
-                print(
-                    f"{Fore.YELLOW}Attempt {tentativa + 1} failed. Retrying in {Config.RETRY_DELAY_SEGUNDOS}s...{Style.RESET_ALL}")
+                # Fix: substituir print por logging
+                logging.warning(
+                    "Attempt %d failed. Retrying in %ds...",
+                    tentativa + 1, Config.RETRY_DELAY_SEGUNDOS,
+                )
                 time.sleep(Config.RETRY_DELAY_SEGUNDOS)
             else:
                 raise ConnectionError(
@@ -310,7 +439,12 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
 
 
 def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
-    """Calcula pivôs ZigZag com alternância e desvio percentual mínimo."""
+    """Compute ZigZag pivots requiring alternation and minimum percentage deviation.
+
+    Fixes:
+    - Lógica de desempate para candidatos no mesmo índice priorizando alternância
+    - Fator de desvio mínimo para pivô de extensão parametrizado
+    """
     peak_series, valley_series = df['high'], df['low']
     window_size = 2 * depth + 1
     rolling_max, rolling_min = peak_series.rolling(window=window_size, center=True, min_periods=1).max(
@@ -324,14 +458,36 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
     for idx, row in candidate_valleys_df.iterrows():
         candidates.append(
             {'idx': idx, 'preco': row[valley_series.name], 'tipo': 'VALE'})
-    candidates = sorted(
-        list({p['idx']: p for p in candidates}.values()), key=lambda x: x['idx'])
+    # Fix: Lógica de desempate para pivôs ZigZag — não descartar por índice único;
+    # ordenar por índice e tratar empates durante a iteração
+    candidates = sorted(candidates, key=lambda x: x['idx'])
     if len(candidates) < 2:
         return []
     confirmed_pivots = [candidates[0]]
     last_pivot = candidates[0]
     for i in range(1, len(candidates)):
         candidate = candidates[i]
+        # Fix: Lógica de desempate para pivôs no mesmo índice
+        if candidate['idx'] == last_pivot['idx']:
+            # Se o tipo é diferente, prefira o que mantém alternância com o pivô anterior
+            if candidate['tipo'] != last_pivot['tipo']:
+                if len(confirmed_pivots) >= 2:
+                    prev_prev = confirmed_pivots[-2]
+                    if (candidate['tipo'] != prev_prev['tipo'] and
+                            last_pivot['tipo'] == prev_prev['tipo']):
+                        confirmed_pivots[-1] = candidate
+                        last_pivot = candidate
+                else:
+                    # Sem histórico suficiente, prefira alternância
+                    confirmed_pivots[-1] = candidate
+                    last_pivot = candidate
+            else:
+                # Mesmo tipo e mesmo índice: mantenha o mais extremo
+                if (candidate['tipo'] == 'PICO' and candidate['preco'] > last_pivot['preco']) or \
+                   (candidate['tipo'] == 'VALE' and candidate['preco'] < last_pivot['preco']):
+                    confirmed_pivots[-1] = candidate
+                    last_pivot = candidate
+            continue
         if candidate['tipo'] == last_pivot['tipo']:
             if (candidate['tipo'] == 'PICO' and candidate['preco'] > last_pivot['preco']) or (candidate['tipo'] == 'VALE' and candidate['preco'] < last_pivot['preco']):
                 confirmed_pivots[-1], last_pivot = candidate, candidate
@@ -347,42 +503,56 @@ def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: flo
         last_confirmed_pivot = confirmed_pivots[-1]
         last_bar = df.iloc[-1]
 
-        # Se o último candle prolongar o movimento na MESMA direção,
-        # apenas atualizamos o pivô existente. Caso contrário, criamos um novo pivô.
+        # If the last candle continues the move in the SAME direction,
+        # only update the existing pivot. Otherwise, create a new pivot.
         if last_confirmed_pivot['tipo'] == 'PICO':
-            # Movimento ainda de alta: atualiza o pico existente
+            # Up move continues: update last peak
             if last_bar['high'] > last_confirmed_pivot['preco']:
                 last_confirmed_pivot['preco'] = last_bar['high']
                 last_confirmed_pivot['idx'] = df.index[-1]
             else:
-                # Inverteu para baixa → cria um VALE
+                # Reversal to downtrend → create a VALLEY
                 potential_pivot = {
                     'idx': df.index[-1],
                     'tipo': 'VALE',
                     'preco': last_bar['low']
                 }
                 if potential_pivot['idx'] != last_confirmed_pivot['idx']:
-                    confirmed_pivots.append(potential_pivot)
-        else:  # último pivô é VALE
-            # Movimento ainda de baixa: atualiza o vale existente
+                    # Fix: fator de desvio da extensão parametrizado
+                    min_ext_dev = deviation_percent * getattr(
+                        Config, 'ZIGZAG_EXTENSION_DEVIATION_FACTOR', 0.25)
+                    if last_confirmed_pivot['preco'] != 0:
+                        ext_dev = abs(
+                            potential_pivot['preco'] - last_confirmed_pivot['preco']) / last_confirmed_pivot['preco'] * 100
+                        if ext_dev >= min_ext_dev:
+                            confirmed_pivots.append(potential_pivot)
+        else:  # last pivot is a VALLEY
+            # Down move continues: update last valley
             if last_bar['low'] < last_confirmed_pivot['preco']:
                 last_confirmed_pivot['preco'] = last_bar['low']
                 last_confirmed_pivot['idx'] = df.index[-1]
             else:
-                # Inverteu para alta → cria um PICO
+                # Reversal to uptrend → create a PEAK
                 potential_pivot = {
                     'idx': df.index[-1],
                     'tipo': 'PICO',
                     'preco': last_bar['high']
                 }
                 if potential_pivot['idx'] != last_confirmed_pivot['idx']:
-                    confirmed_pivots.append(potential_pivot)
+                    # Fix: fator de desvio da extensão parametrizado
+                    min_ext_dev = deviation_percent * getattr(
+                        Config, 'ZIGZAG_EXTENSION_DEVIATION_FACTOR', 0.25)
+                    if last_confirmed_pivot['preco'] != 0:
+                        ext_dev = abs(
+                            potential_pivot['preco'] - last_confirmed_pivot['preco']) / last_confirmed_pivot['preco'] * 100
+                        if ext_dev >= min_ext_dev:
+                            confirmed_pivots.append(potential_pivot)
 
     return confirmed_pivots
 
 
 def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int) -> bool:
-    """Valida se a cabeça é extrema (máxima/mínima) numa janela em barras."""
+    """Validate whether the head is an extreme (max/min) within a bars window."""
     base_lookback = int(avg_pivot_dist_bars *
                         Config.HEAD_EXTREME_LOOKBACK_FACTOR)
     lookback_bars = max(base_lookback, getattr(
@@ -391,26 +561,38 @@ def is_head_extreme(df: pd.DataFrame, head_pivot: Dict, avg_pivot_dist_bars: int
         return True
 
     try:
-        # Encontra a posição numérica (iloc) do pivô da cabeça
+        # Find numeric position (iloc) of the head pivot
         head_loc = df.index.get_loc(head_pivot['idx'])
 
-        # Define o início e o fim da janela de busca em posições numéricas
+        # Define start and end of the search window in numeric positions
         start_loc = max(0, head_loc - lookback_bars)
         end_loc = min(len(df), head_loc + lookback_bars + 1)
 
-        # Fatia o DataFrame usando as posições para criar a janela de contexto
+        # Slice the DataFrame by positions to create the context window
         context_df = df.iloc[start_loc:end_loc]
 
-        if context_df.empty:
-            return True
+        # Exclude the pivot's own bar to ensure strict unique extreme check
+        try:
+            context_wo_head = context_df.drop(index=head_pivot['idx'])
+        except Exception:
+            context_wo_head = context_df
+
+        if context_wo_head.empty:
+            # Fix: closed-fail. Without a valid context window, do not assume an extreme
+            return False
 
         if head_pivot['tipo'] == 'PICO':
-            return head_pivot['preco'] >= context_df['high'].max()
+            # Strict comparator vs. other bars (pivot bar excluded)
+            return head_pivot['preco'] > context_wo_head['high'].max()
         else:  # VALE
-            return head_pivot['preco'] <= context_df['low'].min()
+            # Strict comparator vs. other bars (pivot bar excluded)
+            return head_pivot['preco'] < context_wo_head['low'].min()
 
     except KeyError:
-        # A data do pivô não foi encontrada no índice do DataFrame
+        # Pivot date not found in the DataFrame index
+        return False
+    except Exception:
+        # Fix: any failure computing context implies not an extreme
         return False
 
 
@@ -434,17 +616,27 @@ def check_rsi_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, t
 
 
 def check_macd_divergence(df: pd.DataFrame, p1_idx, p3_idx, p1_price, p3_price, tipo_padrao: str) -> bool:
-    """Detecta divergência do histograma do MACD entre p1 e p3."""
+    """Detect MACD histogram divergence between two points (p1 and p3/p5).
+
+    Supports: 'OCO','OCOI','DT','DB','TT','TB'.
+    - Bearish patterns: 'OCO','DT','TT' → price up (p3>p1) while histogram down (h3<h1).
+    - Bullish patterns: 'OCOI','DB','TB' → price down (p3<p1) while histogram up (h3>h1).
+    """
     try:
-        macd = df.ta.macd(fast=getattr(Config, 'MACD_FAST', 12), slow=getattr(
-            Config, 'MACD_SLOW', 26), signal=getattr(Config, 'MACD_SIGNAL', 9), append=False)
-        hist_col = 'MACDh_12_26_9'
-        if p1_idx not in macd.index or p3_idx not in macd.index:
+        macd_fast = getattr(Config, 'MACD_FAST', 12)
+        macd_slow = getattr(Config, 'MACD_SLOW', 26)
+        macd_signal = getattr(Config, 'MACD_SIGNAL', 9)
+        hist_col = f'MACDh_{macd_fast}_{macd_slow}_{macd_signal}'
+        if hist_col not in df.columns:
             return False
-        hist_p1, hist_p3 = macd[hist_col].loc[p1_idx], macd[hist_col].loc[p3_idx]
-        if tipo_padrao == 'OCO':
+        if p1_idx not in df.index or p3_idx not in df.index:
+            return False
+        hist_p1, hist_p3 = df.loc[p1_idx, hist_col], df.loc[p3_idx, hist_col]
+        bearish_types = ('OCO', 'DT', 'TT')
+        bullish_types = ('OCOI', 'DB', 'TB')
+        if tipo_padrao in bearish_types:
             return p3_price > p1_price and hist_p3 < hist_p1
-        elif tipo_padrao == 'OCOI':
+        elif tipo_padrao in bullish_types:
             return p3_price < p1_price and hist_p3 > hist_p1
     except Exception:
         return False
@@ -471,10 +663,21 @@ def assess_rsi_divergence_strength(
     Strong divergence requires deeper zone levels or a minimum delta in RSI.
     """
     try:
-        rsi = ta.rsi(source_series, length=getattr(Config, 'RSI_LENGTH', 14))
-        if p1_idx not in rsi.index or p3_idx not in rsi.index:
+        rsi_len = getattr(Config, 'RSI_LENGTH', 14)
+        src_name = getattr(source_series, 'name', 'close')
+        if src_name == 'high':
+            rsi_col = f'RSI_{rsi_len}_HIGH'
+        elif src_name == 'low':
+            rsi_col = f'RSI_{rsi_len}_LOW'
+        else:
+            rsi_col = f'RSI_{rsi_len}_CLOSE'
+        if rsi_col not in df.columns:
             return False, False
-        rsi1, rsi3 = float(rsi.loc[p1_idx]), float(rsi.loc[p3_idx])
+        rsi_series = df[rsi_col]
+        if p1_idx not in rsi_series.index or p3_idx not in rsi_series.index:
+            return False, False
+        rsi1, rsi3 = float(rsi_series.loc[p1_idx]), float(
+            rsi_series.loc[p3_idx])
         if np.isnan(rsi1) or np.isnan(rsi3):
             return False, False
 
@@ -515,16 +718,17 @@ def detect_macd_signal_cross(
         lookback = lookback_bars if lookback_bars is not None else getattr(
             Config, 'MACD_SIGNAL_CROSS_LOOKBACK_BARS', 7
         )
-        macd_df = df.ta.macd(fast=getattr(Config, 'MACD_FAST', 12), slow=getattr(
-            Config, 'MACD_SLOW', 26), signal=getattr(Config, 'MACD_SIGNAL', 9), append=False)
-        if macd_df is None:
+        macd_fast = getattr(Config, 'MACD_FAST', 12)
+        macd_slow = getattr(Config, 'MACD_SLOW', 26)
+        macd_signal = getattr(Config, 'MACD_SIGNAL', 9)
+        macd_col = f'MACD_{macd_fast}_{macd_slow}_{macd_signal}'
+        sig_col = f'MACDs_{macd_fast}_{macd_slow}_{macd_signal}'
+        if macd_col not in df.columns or sig_col not in df.columns:
             return False
-        macd_line = macd_df.get('MACD_12_26_9')
-        signal_line = macd_df.get('MACDs_12_26_9')
-        if macd_line is None or signal_line is None:
+        if idx_ref not in df.index:
             return False
-        if idx_ref not in macd_df.index:
-            return False
+        macd_line = df[macd_col]
+        signal_line = df[sig_col]
         ref_pos = df.index.get_loc(idx_ref)
         start_pos = max(0, ref_pos - lookback)
         # Use df index to slice consistent window
@@ -532,10 +736,17 @@ def detect_macd_signal_cross(
         diff = (macd_line.loc[window] - signal_line.loc[window]).dropna()
         if len(diff) < 2:
             return False
-        prev, curr = diff.iloc[-2], diff.iloc[-1]
-        if direction == 'bearish':
-            return prev >= 0 and curr < 0
-        return prev <= 0 and curr > 0
+        # Fix: flexibilizar regra — aceitar cruzamento dentro dos últimos N candles
+        max_age = getattr(Config, 'MACD_CROSS_MAX_AGE_BARS', 3)
+        transitions_to_check = min(len(diff) - 1, max(1, int(max_age)))
+        for j in range(1, transitions_to_check + 1):
+            prev_val = diff.iloc[-(j + 1)]
+            curr_val = diff.iloc[-j]
+            if direction == 'bearish' and (prev_val >= 0 and curr_val < 0):
+                return True
+            if direction == 'bullish' and (prev_val <= 0 and curr_val > 0):
+                return True
+        return False
     except Exception:
         return False
 
@@ -563,6 +774,7 @@ def find_breakout_index(
         for pos in range(start_pos + 1, end_pos + 1):
             idx = df.index[pos]
             close_val = float(df.loc[idx, 'close'])
+            # Fix: strict breakout criteria to avoid counting line touches
             if direction == 'bearish' and close_val < neckline_price:
                 return idx
             if direction == 'bullish' and close_val > neckline_price:
@@ -613,8 +825,8 @@ def check_stochastic_confirmation(
 ) -> dict:
     """Stochastic Oscillator confirmations: divergence and %K/%D cross.
 
-    Only considered if the starting value (at p1) is in overbought/oversold
-    zones (>80 or <20). Returns a dict with two boolean flags:
+    Optionally requires the starting value (at p1) to be in OB/OS zones
+    (controlled by Config.STOCH_DIVERGENCE_REQUIRES_OBOS). Returns flags:
     - valid_estocastico_divergencia
     - valid_estocastico_cross
     """
@@ -623,69 +835,74 @@ def check_stochastic_confirmation(
         'valid_estocastico_cross': False,
     }
     try:
-        stoch = ta.stoch(
-            high=df['high'], low=df['low'], close=df['close'],
-            k=getattr(Config, 'STOCH_K', 14),
-            d=getattr(Config, 'STOCH_D', 3),
-            smooth_k=getattr(Config, 'STOCH_SMOOTH_K', 3),
-        )
-        if stoch is None:
-            return result
         k_col = f"STOCHk_{getattr(Config, 'STOCH_K', 14)}_{getattr(Config, 'STOCH_D', 3)}_{getattr(Config, 'STOCH_SMOOTH_K', 3)}"
         d_col = f"STOCHd_{getattr(Config, 'STOCH_K', 14)}_{getattr(Config, 'STOCH_D', 3)}_{getattr(Config, 'STOCH_SMOOTH_K', 3)}"
-        if k_col not in stoch.columns or d_col not in stoch.columns:
-            # Some pandas_ta versions name columns without underscores; try defaults
-            k_col = 'STOCHk_14_3_3' if 'STOCHk_14_3_3' in stoch.columns else k_col
-            d_col = 'STOCHd_14_3_3' if 'STOCHd_14_3_3' in stoch.columns else d_col
-        if p1_idx not in stoch.index or p3_idx not in stoch.index:
+        # Some pandas_ta versions name columns with default params
+        if k_col not in df.columns or d_col not in df.columns:
+            k_col = 'STOCHk_14_3_3' if 'STOCHk_14_3_3' in df.columns else k_col
+            d_col = 'STOCHd_14_3_3' if 'STOCHd_14_3_3' in df.columns else d_col
+        if k_col not in df.columns or d_col not in df.columns:
             return result
-        k1 = float(stoch.loc[p1_idx, k_col])
-        k3 = float(stoch.loc[p3_idx, k_col])
+        if p1_idx not in df.index or p3_idx not in df.index:
+            return result
+        k1 = float(df.loc[p1_idx, k_col])
+        k3 = float(df.loc[p3_idx, k_col])
         if np.isnan(k1) or np.isnan(k3):
             return result
 
         ob = getattr(Config, 'STOCH_OVERBOUGHT', 80)
         os_ = getattr(Config, 'STOCH_OVERSOLD', 20)
         min_delta = getattr(Config, 'STOCH_DIVERGENCE_MIN_DELTA', 5.0)
+        requires_obos = getattr(Config, 'STOCH_DIVERGENCE_REQUIRES_OBOS', True)
 
-        # Divergence only if starting in OB/OS
-        if direction == 'bearish' and k1 >= ob:
-            div = (p3_price > p1_price) and (
-                k3 < k1) and ((k1 - k3) >= min_delta)
-            result['valid_estocastico_divergencia'] = bool(div)
-        if direction == 'bullish' and k1 <= os_:
-            div = (p3_price < p1_price) and (
-                k3 > k1) and ((k3 - k1) >= min_delta)
-            result['valid_estocastico_divergencia'] = bool(div)
+        # Fix: OB/OS requirement for divergence can be toggled via Config
+        if direction == 'bearish':
+            cond_start = (k1 >= ob) if requires_obos else True
+            if cond_start:
+                div = (p3_price > p1_price) and (
+                    k3 < k1) and ((k1 - k3) >= min_delta)
+                result['valid_estocastico_divergencia'] = bool(div)
+        if direction == 'bullish':
+            cond_start = (k1 <= os_) if requires_obos else True
+            if cond_start:
+                div = (p3_price < p1_price) and (
+                    k3 > k1) and ((k3 - k1) >= min_delta)
+                result['valid_estocastico_divergencia'] = bool(div)
 
         # Directional %K/%D cross within recent window
-        if p3_idx in stoch.index:
+        if p3_idx in df.index:
             lookback = getattr(Config, 'STOCH_CROSS_LOOKBACK_BARS', 7)
             ref_pos = df.index.get_loc(p3_idx) if p3_idx in df.index else None
             if ref_pos is not None:
                 start_pos = max(0, ref_pos - lookback)
                 window = df.index[start_pos:ref_pos + 1]
-                k = stoch.loc[window, k_col].dropna()
-                d = stoch.loc[window, d_col].dropna()
+                k = df.loc[window, k_col].dropna()
+                d = df.loc[window, d_col].dropna()
                 diff = (k - d).dropna()
                 if len(diff) >= 2:
-                    prev, curr = diff.iloc[-2], diff.iloc[-1]
-                    if direction == 'bearish' and prev >= 0 and curr < 0 and k1 >= ob:
-                        result['valid_estocastico_cross'] = True
-                    if direction == 'bullish' and prev <= 0 and curr > 0 and k1 <= os_:
-                        result['valid_estocastico_cross'] = True
+                    # Scan for any directional cross in the window
+                    if direction == 'bearish' and k1 >= ob:
+                        for i in range(1, len(diff)):
+                            if diff.iloc[i-1] >= 0 and diff.iloc[i] < 0:
+                                result['valid_estocastico_cross'] = True
+                                break
+                    if direction == 'bullish' and k1 <= os_:
+                        for i in range(1, len(diff)):
+                            if diff.iloc[i-1] <= 0 and diff.iloc[i] > 0:
+                                result['valid_estocastico_cross'] = True
+                                break
     except Exception:
         return result
     return result
 
 
 def check_volume_profile(df: pd.DataFrame, pivots: List[Dict[str, Any]], p1_idx, p3_idx, p5_idx) -> bool:
-    """Compara volume próximo à cabeça vs. ombro direito para confirmar padrão."""
+    """Compare volume near the head vs. right shoulder to confirm pattern."""
     try:
         indices = {p['idx']: i for i, p in enumerate(pivots)}
         idx_p1, idx_p3, idx_p5 = indices.get(
             p1_idx), indices.get(p3_idx), indices.get(p5_idx)
-        if any(i is None for i in [idx_p1, idx_p3, idx_p5]) or idx_p1 < 2:
+        if any(i is None for i in [idx_p1, idx_p3, idx_p5]) or any(i < 1 for i in [idx_p1, idx_p3, idx_p5]):
             return False
         p0_idx, p2_idx, p4_idx = pivots[idx_p1 -
                                         1]['idx'], pivots[idx_p3-1]['idx'], pivots[idx_p5-1]['idx']
@@ -727,30 +944,42 @@ def validate_and_score_hns_pattern(p0, p1, p2, p3, p4, p5, p6, tipo_padrao, df_h
     if not details['valid_simetria_ombros']:
         return None
 
-    details['valid_neckline_plana'] = altura_ombro_esq > 0 and \
+    # Fix: use average shoulder height for flat neckline tolerance (robust to asymmetries)
+    altura_media_ombros = np.mean([altura_ombro_esq, altura_ombro_dir])
+    details['valid_neckline_plana'] = altura_media_ombros > 0 and \
         abs(neckline1['preco'] - neckline2['preco']
-            ) <= altura_ombro_esq * Config.NECKLINE_FLATNESS_TOLERANCE
+            ) <= altura_media_ombros * Config.NECKLINE_FLATNESS_TOLERANCE
     if not details['valid_neckline_plana']:
         return None
 
-    details['valid_base_tendencia'] = (tipo_padrao == 'OCO' and ((p0['preco'] < neckline1['preco'] and p0['preco'] < neckline2['preco']) or (abs(p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05))) or \
-                                      (tipo_padrao == 'OCOI' and ((p0['preco'] > neckline1['preco'] and p0['preco'] > neckline2['preco']) or (abs(
-                                          p0['preco'] - neckline1['preco']) < p0['preco'] * 0.05 and abs(p0['preco'] - neckline2['preco']) < p0['preco'] * 0.05)))
+    # Fix: stricter base trend. OCO requires p0 strictly below both neck valleys;
+    # OCOI requires p0 strictly above both neck peaks.
+    if tipo_padrao == 'OCO':
+        details['valid_base_tendencia'] = (p0['preco'] < neckline1['preco']) and (
+            p0['preco'] < neckline2['preco'])
+    else:  # 'OCOI'
+        details['valid_base_tendencia'] = (p0['preco'] > neckline1['preco']) and (
+            p0['preco'] > neckline2['preco'])
     if not details['valid_base_tendencia']:
         return None
 
     # reteste de neckline (p6) deve ocorrer próximo à neckline com tolerância por ATR
     neckline_price = np.mean([neckline1['preco'], neckline2['preco']])
-    # Tolerância adaptativa baseada no ATR(14)
-    atr_series = df_historico.ta.atr(length=14)
+    # Tolerância adaptativa baseada no ATR(14) pré-calculado
+    atr_series = df_historico['ATR_14'] if 'ATR_14' in df_historico.columns else pd.Series(
+        dtype=float)
     # Procura o ATR no índice do p6; se não houver valor, usa o último ATR disponível
     if p6['idx'] in atr_series.index and not np.isnan(atr_series.loc[p6['idx']]):
-        atr_val = atr_series.loc[p6['idx']]
+        atr_val = float(atr_series.loc[p6['idx']])
     else:
-        atr_val = atr_series.dropna(
-        ).iloc[-1] if not atr_series.dropna().empty else 0
+        atr_val = float(
+            atr_series.dropna().iloc[-1]) if not atr_series.dropna().empty else 0.0
 
-    max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    # Fallback: if ATR unavailable/zero, use 0.5% of neckline price
+    if atr_val > 0:
+        max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    else:
+        max_variation = float(neckline_price) * 0.005
 
     is_close_to_neckline = abs(p6['preco'] - neckline_price) <= max_variation
     details['valid_neckline_retest_p6'] = is_close_to_neckline
@@ -856,8 +1085,7 @@ def check_volume_profile_dtb(df, p0, p1, p2, p3):
 
 def check_obv_divergence_dtb(df, p1, p3, tipo_padrao):
     try:
-        # Gera/garante coluna OBV
-        df.ta.obv(append=True)
+        # Use precomputed OBV
         if 'OBV' not in df.columns:
             return False
 
@@ -880,7 +1108,7 @@ def check_obv_divergence_dtb(df, p1, p3, tipo_padrao):
 
 
 def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Gera janelas de 7 pivôs, identifica OCO/OCOI e valida com p6 (reteste)."""
+    """Generate 7-pivot windows, identify H&S/Inverse H&S and validate with p6 (retest)."""
     padroes_encontrados = []
     n = len(pivots)
     if n < 7:
@@ -896,12 +1124,18 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
         avg_pivot_dist_bars = np.mean(
             distancias_em_barras) if distancias_em_barras else 0
     except Exception as e:
-        print(f"{Fore.YELLOW}Aviso: Não foi possível calcular a distância média dos pivôs. Erro: {e}{Style.RESET_ALL}")
+        # Fix: substituir print por logging
+        logging.warning(
+            "Aviso: Não foi possível calcular a distância média dos pivôs. Erro: %s", e)
         avg_pivot_dist_bars = 0  # Fallback
     start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
 
-    print(
-        f"Analyzing only the last {Config.RECENT_PATTERNS_LOOKBACK_COUNT} possible final pivots (from index {start_index}).")
+    # Fix: substituir print por logging
+    logging.info(
+        "Analyzing only the last %d possible final pivots (from index %d).",
+        Config.RECENT_PATTERNS_LOOKBACK_COUNT,
+        start_index,
+    )
 
     for i in range(start_index, n - 6):
         janela = pivots[i:i+7]
@@ -928,7 +1162,7 @@ def identificar_padroes_hns(pivots: List[Dict[str, Any]], df_historico: pd.DataF
 def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_historico, avg_pivot_dist_bars: int):
     """Validate and score Double Top (DT) and Double Bottom (DB).
 
-    p4: pivô adicional (reteste).
+    p4: additional pivot (retest).
     """
     if tipo_padrao not in ('DT', 'DB'):
         return None
@@ -958,11 +1192,11 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_estrutura_picos_vales'] = estrutura_tipos_ok and relacoes_precos_ok
     if not details['valid_estrutura_picos_vales']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_estrutura_picos_vales ({tipo_padrao}). "
-                f"tipos=[{p0.get('tipo')},{p1.get('tipo')},{p2.get('tipo')},{p3.get('tipo')}] "
-                f"precos=[p0={preco_p0:.6f}, p1={preco_p1:.6f}, p2={preco_p2:.6f}, p3={preco_p3:.6f}]"
-                f"{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.YELLOW}DTB debug: fail at valid_estrutura_picos_vales ({tipo_padrao}). "
+                           f"tipos=[{p0.get('tipo')},{p1.get('tipo')},{p2.get('tipo')},{p3.get('tipo')}] "
+                           f"precos=[p0={preco_p0:.6f}, p1={preco_p1:.6f}, p2={preco_p2:.6f}, p3={preco_p3:.6f}]"
+                           f"{Style.RESET_ALL}")
         return None
 
     # Contexto obrigatório: p1 e p3 devem ser extremos relevantes na janela
@@ -988,13 +1222,13 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
                 ) if not context_df.empty else float('nan')
                 ctx_low = context_df['low'].min(
                 ) if not context_df.empty else float('nan')
-                _dtb_debug(
-                    f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
-                    f"lookback_bars={lookback_bars} p1_preco={preco_p1:.6f} ctx_high={ctx_high:.6f} ctx_low={ctx_low:.6f}{Style.RESET_ALL}")
+                _pattern_debug(tipo_padrao,
+                               f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
+                               f"lookback_bars={lookback_bars} p1_preco={preco_p1:.6f} ctx_high={ctx_high:.6f} ctx_low={ctx_low:.6f}{Style.RESET_ALL}")
             except Exception:
-                _dtb_debug(
-                    f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
-                    f"[context window calc error]{Style.RESET_ALL}")
+                _pattern_debug(tipo_padrao,
+                               f"{Fore.YELLOW}DTB debug: fail at valid_contexto_extremos ({tipo_padrao}). "
+                               f"[context window calc error]{Style.RESET_ALL}")
         return None
 
     # Trend context: enforce HH/HL for DT and LH/LL for DB on recent pivots
@@ -1015,9 +1249,9 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_contexto_tendencia'] = bool(trend_ok)
     if not details['valid_contexto_tendencia']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_contexto_tendencia ({tipo_padrao}). "
-                f"p0={preco_p0:.6f} p1={preco_p1:.6f} p2={preco_p2:.6f} min_sep={min_sep:.9f}{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.YELLOW}DTB debug: fail at valid_contexto_tendencia ({tipo_padrao}). "
+                           f"p0={preco_p0:.6f} p1={preco_p1:.6f} p2={preco_p2:.6f} min_sep={min_sep:.9f}{Style.RESET_ALL}")
         return None
 
     # Symmetry of extremes (p1 ~ p3) based on pattern height (|p1 - p2|)
@@ -1027,10 +1261,10 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_simetria_extremos'] = diff_picos <= tolerancia_preco
     if not details['valid_simetria_extremos']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_simetria_extremos ({tipo_padrao}). "
-                f"tol={tolerancia_preco:.9f} diff={diff_picos:.9f} altura={altura_padrao:.9f} "
-                f"p1={preco_p1:.6f} p3={preco_p3:.6f}{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.YELLOW}DTB debug: fail at valid_simetria_extremos ({tipo_padrao}). "
+                           f"tol={tolerancia_preco:.9f} diff={diff_picos:.9f} altura={altura_padrao:.9f} "
+                           f"p1={preco_p1:.6f} p3={preco_p3:.6f}{Style.RESET_ALL}")
         return None
 
     # Depth of middle valley/peak relative to previous leg (p0->p1)
@@ -1043,32 +1277,37 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     details['valid_profundidade_vale_pico'] = perna_anterior > 0 and profundidade >= required
     if not details['valid_profundidade_vale_pico']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_profundidade_vale_pico ({tipo_padrao}). "
-                f"profundidade={profundidade:.6f} required={required:.6f} perna_anterior={perna_anterior:.6f} "
-                f"ratio_req={Config.DTB_VALLEY_PEAK_DEPTH_RATIO:.3f}{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.YELLOW}DTB debug: fail at valid_profundidade_vale_pico ({tipo_padrao}). "
+                           f"profundidade={profundidade:.6f} required={required:.6f} perna_anterior={perna_anterior:.6f} "
+                           f"ratio_req={Config.DTB_VALLEY_PEAK_DEPTH_RATIO:.3f}{Style.RESET_ALL}")
         return None
 
     # Mandatory: p4 must be a valid retest of the neckline (defined by p2)
     neckline_price = preco_p2
-    atr_series = df_historico.ta.atr(length=14)
+    atr_series = df_historico['ATR_14'] if 'ATR_14' in df_historico.columns else pd.Series(
+        dtype=float)
     if p4.get('idx') in atr_series.index and not np.isnan(atr_series.loc[p4.get('idx')]):
-        atr_val = atr_series.loc[p4.get('idx')]
+        atr_val = float(atr_series.loc[p4.get('idx')])
     else:
-        atr_val = atr_series.dropna(
-        ).iloc[-1] if not atr_series.dropna().empty else 0
+        atr_val = float(
+            atr_series.dropna().iloc[-1]) if not atr_series.dropna().empty else 0.0
 
-    max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    # Fallback: if ATR unavailable/zero, use 0.5% of neckline price
+    if atr_val > 0:
+        max_variation = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    else:
+        max_variation = float(neckline_price) * 0.005
     dist_neck = abs(float(p4.get('preco')) - neckline_price)
     inside_tolerance = dist_neck <= max_variation
     details['valid_neckline_retest_p4'] = inside_tolerance
     if not details['valid_neckline_retest_p4']:
         if debug:
-            _dtb_debug(
-                f"{Fore.YELLOW}DTB debug: fail at valid_neckline_retest_p4 ({tipo_padrao}). "
-                f"inside_tol={inside_tolerance} atr={atr_val:.6f} mult={Config.NECKLINE_RETEST_ATR_MULTIPLIER:.3f} "
-                f"atr*mult={max_variation:.6f} neckline={neckline_price:.6f} p4={float(p4.get('preco')):.6f} "
-                f"dist={dist_neck:.6f}{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.YELLOW}DTB debug: fail at valid_neckline_retest_p4 ({tipo_padrao}). "
+                           f"inside_tol={inside_tolerance} atr={atr_val:.6f} mult={Config.NECKLINE_RETEST_ATR_MULTIPLIER:.3f} "
+                           f"atr*mult={max_variation:.6f} neckline={neckline_price:.6f} p4={float(p4.get('preco')):.6f} "
+                           f"dist={dist_neck:.6f}{Style.RESET_ALL}")
         return None
 
     # Optional confirmations (volume profile and divergences)
@@ -1092,7 +1331,16 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     if rsi_strong:
         details['valid_divergencia_rsi_strong'] = True
 
-    # MACD signal cross used as confirmation for DT/DB (legacy divergence removed)
+    # MACD histogram divergence (p1 vs p3)
+    if check_macd_divergence(
+        df_historico,
+        p1.get('idx'),
+        p3.get('idx'),
+        preco_p1,
+        preco_p3,
+        tipo_padrao,
+    ):
+        details['valid_divergencia_macd'] = True
 
     stoch_flags = check_stochastic_confirmation(
         df_historico, p1.get('idx'), p3.get(
@@ -1109,21 +1357,19 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
     # MACD signal cross near breakout
     if breakout_idx is not None and detect_macd_signal_cross(df_historico, breakout_idx, direction):
         details['valid_macd_signal_cross'] = True
-        details['valid_divergencia_macd'] = True
     elif detect_macd_signal_cross(df_historico, p4.get('idx'), direction):
         details['valid_macd_signal_cross'] = True
-        details['valid_divergencia_macd'] = True
 
     # Volume spike on breakout
     if breakout_idx is not None and check_breakout_volume(df_historico, breakout_idx):
         details['valid_volume_breakout_neckline'] = True
 
     # Optional: second top lower (DT) or second bottom higher (DB)
-    if 'valid_segundo_topo_menor' in details:
+    if 'valid_extremo_secundario_fraco' in details:
         if tipo_padrao == 'DT' and preco_p3 < preco_p1:
-            details['valid_segundo_topo_menor'] = True
+            details['valid_extremo_secundario_fraco'] = True
         elif tipo_padrao == 'DB' and preco_p3 > preco_p1:
-            details['valid_segundo_topo_menor'] = True
+            details['valid_extremo_secundario_fraco'] = True
 
     # Scoring
     score = 0
@@ -1133,8 +1379,8 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
 
     if score >= Config.MINIMUM_SCORE_DTB:
         if debug:
-            _dtb_debug(
-                f"{Fore.GREEN}DTB debug: ACCEPTED {tipo_padrao} with score={score}{Style.RESET_ALL}")
+            _pattern_debug(tipo_padrao,
+                           f"{Fore.GREEN}DTB debug: ACCEPTED {tipo_padrao} with score={score}{Style.RESET_ALL}")
         return {
             'padrao_tipo': tipo_padrao,
             'score_total': score,
@@ -1147,8 +1393,8 @@ def validate_and_score_double_pattern(p0, p1, p2, p3, p4, tipo_padrao, df_histor
         }
 
     if debug:
-        _dtb_debug(
-            f"{Fore.YELLOW}DTB debug: fail at minimum score ({tipo_padrao}). score={score} min={Config.MINIMUM_SCORE_DTB}{Style.RESET_ALL}")
+        _pattern_debug(tipo_padrao,
+                       f"{Fore.YELLOW}DTB debug: fail at minimum score ({tipo_padrao}). score={score} min={Config.MINIMUM_SCORE_DTB}{Style.RESET_ALL}")
     return None
 
 
@@ -1170,12 +1416,18 @@ def identificar_padroes_double_top_bottom(pivots: List[Dict[str, Any]], df_histo
         avg_pivot_dist_bars = np.mean(
             distancias_em_barras) if distancias_em_barras else 0
     except Exception as e:
-        print(f"{Fore.YELLOW}Aviso: Não foi possível calcular a distância média dos pivôs (DTB). Erro: {e}{Style.RESET_ALL}")
+        # Fix: substituir print por logging
+        logging.warning(
+            "Aviso: Não foi possível calcular a distância média dos pivôs (DTB). Erro: %s", e)
         avg_pivot_dist_bars = 0
 
     start_index = max(0, n - 4 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
-    print(
-        f"Analyzing only the last {Config.RECENT_PATTERNS_LOOKBACK_COUNT} DT/DB candidates (from index {start_index}).")
+    # Fix: substituir print por logging
+    logging.info(
+        "Analyzing only the last %d DT/DB candidates (from index %d).",
+        Config.RECENT_PATTERNS_LOOKBACK_COUNT,
+        start_index,
+    )
 
     for i in range(start_index, n - 4):
         janela = pivots[i:i+5]
@@ -1214,7 +1466,10 @@ def identificar_padroes_ttb(pivots: List[Dict[str, Any]]) -> List[Dict[str, Any]
     if n < 7:
         return resultados
 
-    for i in range(0, n - 6):
+    # Harmonize with other detectors: restrict to recent candidates
+    start_index = max(0, n - 6 - Config.RECENT_PATTERNS_LOOKBACK_COUNT)
+
+    for i in range(start_index, n - 6):
         janela = pivots[i:i + 7]
         tipos = [p.get('tipo') for p in janela]
         if tipos == ['VALE', 'PICO', 'VALE', 'PICO', 'VALE', 'PICO', 'VALE']:
@@ -1231,9 +1486,10 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
 
     Reuses DTB confirmation helpers (RSI, MACD divergence and signal cross, Stochastic, OBV,
     breakout volume). Returns a dict with 'padrao_tipo', 'score_total', p0..p6 *_idx/_preco and
-    'valid_*' flags. Does not integrate into the main pipeline.
+    'valid_*' flags.
     """
     tipo = pattern.get('padrao_tipo')
+    debug_ttb = getattr(Config, 'TTB_DEBUG', False)
     if tipo not in ('TT', 'TB'):
         return None
 
@@ -1289,6 +1545,12 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
         )
     details['valid_estrutura_picos_vales'] = bool(estrutura_ok and rel_ok)
     if not details['valid_estrutura_picos_vales']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_estrutura_picos_vales ({tipo})."
+                f" p1={preco_p1:.6f} p2={preco_p2:.6f} p3={preco_p3:.6f} p4={preco_p4:.6f} p5={preco_p5:.6f} p6={preco_p6:.6f}{Style.RESET_ALL}"
+            )
         return None
 
     # Context extremos (reuse head extreme logic)
@@ -1298,6 +1560,11 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
         p1_ctx = False
     details['valid_contexto_extremos'] = bool(p1_ctx)
     if not details['valid_contexto_extremos']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_contexto_extremos ({tipo}). p1={preco_p1:.6f}{Style.RESET_ALL}"
+            )
         return None
 
     # Trend context (HL for TT, LH for TB) with tolerance
@@ -1316,6 +1583,11 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
         trend_ok = False
     details['valid_contexto_tendencia'] = bool(trend_ok)
     if not details['valid_contexto_tendencia']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_contexto_tendencia ({tipo}). p0={preco_p0:.6f} p2={preco_p2:.6f} p4={preco_p4:.6f}{Style.RESET_ALL}"
+            )
         return None
 
     # Symmetry across three extremes using tolerance vs pattern height
@@ -1338,6 +1610,11 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
     except Exception:
         details['valid_simetria_extremos'] = False
     if not details['valid_simetria_extremos']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_simetria_extremos ({tipo}).{Style.RESET_ALL}"
+            )
         return None
 
     # Depth checks for each leg after extreme
@@ -1357,20 +1634,35 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
     except Exception:
         details['valid_profundidade_vale_pico'] = False
     if not details['valid_profundidade_vale_pico']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_profundidade_vale_pico ({tipo}).{Style.RESET_ALL}"
+            )
         return None
 
     # Neckline retest at p6 relative to avg(p2, p4)
     neckline_price = float((preco_p2 + preco_p4) / 2.0)
-    atr_series = df_historico.ta.atr(length=14)
+    atr_series = df_historico['ATR_14'] if 'ATR_14' in df_historico.columns else pd.Series(
+        dtype=float)
     if p6.get('idx') in atr_series.index and not np.isnan(atr_series.loc[p6.get('idx')]):
         atr_val = float(atr_series.loc[p6.get('idx')])
     else:
         atr_val = float(
             atr_series.dropna().iloc[-1]) if not atr_series.dropna().empty else 0.0
-    max_var = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    # Fallback: if ATR unavailable/zero, use 0.5% of neckline price
+    if atr_val > 0:
+        max_var = Config.NECKLINE_RETEST_ATR_MULTIPLIER * atr_val
+    else:
+        max_var = float(neckline_price) * 0.005
     details['valid_neckline_retest_p6'] = abs(
         preco_p6 - neckline_price) <= max_var
     if not details['valid_neckline_retest_p6']:
+        if debug_ttb:
+            _pattern_debug(
+                tipo,
+                f"{Fore.YELLOW}TTB debug: fail at valid_neckline_retest_p6 ({tipo}). neckline={neckline_price:.6f} p6={preco_p6:.6f} tol={max_var:.6f}{Style.RESET_ALL}"
+            )
         return None
 
     # Optional confirmations (reuse DTB helpers)
@@ -1390,6 +1682,17 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
     if rsi_strong:
         details['valid_divergencia_rsi_strong'] = True
 
+    # MACD histogram divergence (p1 vs p5)
+    if check_macd_divergence(
+        df_historico,
+        p1.get('idx'),
+        p5.get('idx'),
+        preco_p1,
+        preco_p5,
+        tipo,
+    ):
+        details['valid_divergencia_macd'] = True
+
     st_flags = check_stochastic_confirmation(df_historico, p1.get(
         'idx'), p5.get('idx'), preco_p1, preco_p5, direction)
     details.update(st_flags)
@@ -1398,10 +1701,8 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
         'idx'), direction, getattr(Config, 'BREAKOUT_SEARCH_MAX_BARS', 60))
     if breakout_idx is not None and detect_macd_signal_cross(df_historico, breakout_idx, direction):
         details['valid_macd_signal_cross'] = True
-        details['valid_divergencia_macd'] = True
     elif detect_macd_signal_cross(df_historico, p6.get('idx'), direction):
         details['valid_macd_signal_cross'] = True
-        details['valid_divergencia_macd'] = True
 
     if breakout_idx is not None and check_breakout_volume(df_historico, breakout_idx):
         details['valid_volume_breakout_neckline'] = True
@@ -1413,6 +1714,9 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
             score += Config.SCORE_WEIGHTS_TTB.get(rule, 0)
 
     if score >= Config.MINIMUM_SCORE_TTB:
+        if debug_ttb:
+            _pattern_debug(
+                tipo, f"{Fore.GREEN}TTB debug: ACCEPTED {tipo} with score={score}{Style.RESET_ALL}")
         base = {
             'padrao_tipo': tipo,
             'score_total': score,
@@ -1427,6 +1731,9 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
         base.update(details)
         return base
 
+    if debug_ttb:
+        _pattern_debug(
+            tipo, f"{Fore.YELLOW}TTB debug: fail at minimum score ({tipo}). score={score} min={Config.MINIMUM_SCORE_TTB}{Style.RESET_ALL}")
     return None
 
 
@@ -1476,6 +1783,19 @@ def _parse_cli_args() -> argparse.Namespace:
 
 def main():
     """Pipeline de geração: baixar dados, detectar padrões, salvar CSV final."""
+    # Fix: configurar logging padrão (arquivo + console)
+    debug_dir = getattr(Config, 'DEBUG_DIR', 'logs')
+    os.makedirs(debug_dir, exist_ok=True)
+    log_path = os.path.join(debug_dir, 'run.log')
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding='utf-8'),
+            logging.StreamHandler(),
+        ],
+    )
+
     args = _parse_cli_args()
 
     # Filtros opcionais via CLI (mantendo defaults do Config)
@@ -1504,39 +1824,42 @@ def main():
 
     final_csv_path = args.output if args.output else Config.FINAL_CSV_PATH
 
-    wanted_patterns = args.patterns.upper()
+    wanted_patterns = {s.strip().upper() for s in args.patterns.split(",")}
 
-    print(f"{Style.BRIGHT}--- STARTING GENERATION ENGINE (v20 - Strategies) ---")
+    logging.info("--- STARTING GENERATION ENGINE (v20 - Strategies) ---")
     os.makedirs(os.path.dirname(final_csv_path)
                 or Config.OUTPUT_DIR, exist_ok=True)
 
     todos_os_padroes_finais = []
 
     for strategy_name, intervals_config in strategies_dict.items():
-        print(f"\n{Style.BRIGHT}===== STRATEGY: {strategy_name.upper()} =====")
+        logging.info("===== STRATEGY: %s =====", strategy_name.upper())
         for interval, params in intervals_config.items():
             if intervals_filter and interval not in intervals_filter:
                 continue
             for ticker in selected_tickers:
-                print(
-                    f"\n--- Processing: {ticker} | Interval: {interval} (Strategy: {strategy_name}) ---")
+                logging.info("--- Processing: %s | Interval: %s (Strategy: %s) ---",
+                             ticker, interval, strategy_name)
                 try:
                     df_historico = buscar_dados(
                         ticker, Config.DATA_PERIOD, interval)
+                    # Precompute indicators once per dataset
+                    df_historico = calcular_indicadores(df_historico)
 
-                    print(
-                        f"Calculando ZigZag com depth={params['depth']}, deviation={params['deviation']}%...")
+                    logging.info("Calculando ZigZag com depth=%s, deviation=%s%%...",
+                                 params['depth'], params['deviation'])
                     pivots_detectados = calcular_zigzag_oficial(
                         df_historico, params['depth'], params['deviation'])
 
                     if len(pivots_detectados) < 4:
-                        print("ℹ️ Not enough pivots to form a pattern.")
+                        logging.info("Not enough pivots to form a pattern.")
                         continue
 
                     todos_os_padroes_nesta_execucao: List[Dict[str, Any]] = []
 
                     if ('ALL' in wanted_patterns or 'HNS' in wanted_patterns) and len(pivots_detectados) >= 7:
-                        print("Identifying H&S patterns with hard rules...")
+                        logging.info(
+                            "Identifying H&S patterns with hard rules...")
                         padroes_hns_encontrados = identificar_padroes_hns(
                             pivots_detectados, df_historico)
                         todos_os_padroes_nesta_execucao.extend(
@@ -1550,64 +1873,62 @@ def main():
 
                     # Triple Top/Bottom integration (TT/TB)
                     if 'ALL' in wanted_patterns or 'TTB' in wanted_patterns:
-                        print("Identifying Triple Top/Bottom (TT/TB) candidates...")
+                        logging.info(
+                            "Identifying Triple Top/Bottom (TT/TB) candidates...")
                         candidatos_ttb = identificar_padroes_ttb(
                             pivots_detectados)
                         if candidatos_ttb:
-                            print(
-                                f"Found {len(candidatos_ttb)} TT/TB raw candidates. Validating...")
+                            logging.info("Found %d TT/TB raw candidates. Validating...",
+                                         len(candidatos_ttb))
                         for cand in candidatos_ttb:
                             dados_ttb = validate_and_score_triple_pattern(
                                 cand, df_historico)
                             if dados_ttb:
-                                # Enrich with metadata and optional columns (tipo/score)
+                                # Enrich with metadata
                                 dados_ttb['strategy'] = strategy_name
                                 dados_ttb['timeframe'] = interval
                                 dados_ttb['ticker'] = ticker
-                                dados_ttb['tipo'] = dados_ttb.get(
-                                    'padrao_tipo')
-                                dados_ttb['score'] = dados_ttb.get(
-                                    'score_total')
-                                print(
-                                    f"{Fore.GREEN}TTB accepted {dados_ttb['tipo']} with score={dados_ttb['score']}{Style.RESET_ALL}")
+                                logging.info("TTB accepted %s with score=%s",
+                                             dados_ttb['padrao_tipo'], dados_ttb['score_total'])
                                 todos_os_padroes_nesta_execucao.append(
                                     dados_ttb)
 
                     if todos_os_padroes_nesta_execucao:
-                        print(
-                            f"{Fore.GREEN}✅ Found {len(todos_os_padroes_nesta_execucao)} H&S/DT/DB patterns passing rules and score.")
+                        logging.info("Found %d H&S/DT/DB patterns passing rules and score.",
+                                     len(todos_os_padroes_nesta_execucao))
                         for padrao in todos_os_padroes_nesta_execucao:
                             padrao['strategy'] = strategy_name
                             padrao['timeframe'] = interval
                             padrao['ticker'] = ticker
                             todos_os_padroes_finais.append(padrao)
                     else:
-                        print(
-                            "ℹ️ No H&S or DT/DB patterns met the criteria or minimum score.")
+                        logging.info(
+                            "No H&S or DT/DB patterns met the criteria or minimum score.")
                 except Exception as e:
-                    print(
-                        f"{Fore.RED}❌ Error processing {ticker}/{interval} on strategy {strategy_name}: {e}")
+                    logging.error("Error processing %s/%s on strategy %s: %s",
+                                  ticker, interval, strategy_name, e)
 
-    print(
-        f"\n{Style.BRIGHT}--- Finished. Saving dataset... ---{Style.RESET_ALL}")
+    logging.info("--- Finished. Saving dataset... ---")
 
     if not todos_os_padroes_finais:
-        print(
-            f"{Fore.YELLOW}No H&S or DT/DB patterns were found.")
+        logging.warning("No H&S or DT/DB patterns were found.")
         return
 
     df_final = pd.DataFrame(todos_os_padroes_finais)
 
     # Build unique key per pattern based on last relevant pivot (datetime dtype)
-    # For H&S use 'cabeca_idx'; for DT/DB use 'p3_idx'
+    # For H&S use 'cabeca_idx'; for DT/DB use 'p3_idx'; for TT/TB use 'p5_idx'
     if 'cabeca_idx' not in df_final.columns:
         df_final['cabeca_idx'] = pd.NaT
     if 'p3_idx' not in df_final.columns:
         df_final['p3_idx'] = pd.NaT
+    if 'p5_idx' not in df_final.columns:
+        df_final['p5_idx'] = pd.NaT
     # First coerce to datetime, then strip timezone to avoid tz-aware vs naive mix
     df_final['cabeca_idx'] = pd.to_datetime(
         df_final['cabeca_idx'], errors='coerce')
     df_final['p3_idx'] = pd.to_datetime(df_final['p3_idx'], errors='coerce')
+    df_final['p5_idx'] = pd.to_datetime(df_final['p5_idx'], errors='coerce')
     try:
         df_final['cabeca_idx'] = df_final['cabeca_idx'].dt.tz_localize(None)
     except Exception:
@@ -1616,9 +1937,23 @@ def main():
         df_final['p3_idx'] = df_final['p3_idx'].dt.tz_localize(None)
     except Exception:
         pass
+    try:
+        df_final['p5_idx'] = df_final['p5_idx'].dt.tz_localize(None)
+    except Exception:
+        pass
+
     mask_hns = df_final['padrao_tipo'].isin(['OCO', 'OCOI'])
-    df_final['chave_idx'] = df_final['cabeca_idx'].where(
-        mask_hns, df_final['p3_idx'])
+    mask_ttb = df_final['padrao_tipo'].isin(['TT', 'TB'])
+
+    # Default for DT/DB
+    # Fix: safe assignment with .loc on both sides
+    df_final.loc[:, 'chave_idx'] = df_final.loc[:, 'p3_idx']
+    # HNS uses head index
+    df_final.loc[mask_hns, 'chave_idx'] = df_final.loc[mask_hns,
+                                                       'cabeca_idx']  # Fix: safe masked assignment
+    # TTB uses last extreme p5
+    df_final.loc[mask_ttb, 'chave_idx'] = df_final.loc[mask_ttb,
+                                                       'p5_idx']  # Fix: safe masked assignment
 
     # Remove duplicates using the generic key
     df_final.drop_duplicates(subset=[
@@ -1634,16 +1969,20 @@ def main():
     cols_pontos = [
         col for col in df_final.columns if col.endswith(('_idx', '_preco'))]
 
-    # Ensure all existing columns are included
-    existing_cols = set(df_final.columns)
-    ordem_final = [c for c in (
-        cols_info + cols_validacao + cols_pontos) if c in existing_cols]
-
-    df_final = df_final.reindex(columns=ordem_final)
+    # Fix: preserve all columns. First put the desired groups, then append any leftovers
+    existing_cols = list(df_final.columns)
+    ordered = []
+    for c in cols_info + cols_validacao + cols_pontos:
+        if c in df_final.columns and c not in ordered:
+            ordered.append(c)
+    leftovers = [c for c in existing_cols if c not in ordered]
+    ordem_final = ordered + leftovers
+    df_final = df_final.loc[:, ordem_final]
 
     df_final.to_csv(final_csv_path, index=False,
                     date_format='%Y-%m-%d %H:%M:%S')
-    print(f"\n{Fore.GREEN}✅ Final dataset with {len(df_final)} unique patterns saved to: {final_csv_path}")
+    logging.info("Final dataset with %d unique patterns saved to: %s",
+                 len(df_final), final_csv_path)
 
 
 if __name__ == "__main__":

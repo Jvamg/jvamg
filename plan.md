@@ -70,6 +70,11 @@ python src/patterns/analise/anotador_gui_erros.py
 
 
 ### Notas recentes
+#### Robustez (ATR, ZigZag e validações)
+- ATR: cálculo fortalecido em `calcular_indicadores` usando `append=False` e `squeeze()` para preencher `ATR_14` de forma confiável.
+- Reteste por ATR (HNS/DTB/TTB): se `ATR_14` estiver indisponível ou for zero, aplica fallback de 0.5% do preço da neckline como tolerância mínima.
+- ZigZag: extensão do último pivô agora exige desvio mínimo de 25% do `deviation_percent` configurado para evitar pivôs espúrios.
+- `check_volume_profile`: validação de índices corrigida para cobrir `p1`, `p3` e `p5` (todos precisam ser >= 1).
 - DT/DB: adicionada chave `valid_neckline_retest_p4` (15) em `Config.SCORE_WEIGHTS_DTB`.
 - DT/DB: `MINIMUM_SCORE_DTB` ajustado para 70 (antes 60).
 - DT/DB: `identificar_padroes_double_top_bottom` agora usa janelas de 5 pivôs (inclui pivô de reteste `p4`) e repassa `p4` para validação.
@@ -80,6 +85,31 @@ python src/patterns/analise/anotador_gui_erros.py
  - DT/DB: adicionada regra obrigatória `valid_contexto_tendencia` (HH/HL para DT, LH/LL para DB) com tolerância mínima `DTB_TREND_MIN_DIFF_FACTOR=0.05` relativa à altura do padrão.
 - DT/DB: logs de debug enriquecidos em `validate_and_score_double_pattern` reportando: tipos/preços dos pivôs ao falhar estrutura, janela de contexto/hi-lo ao falhar contexto, `min_sep` e preços ao falhar tendência, tolerância/altura/diff ao falhar simetria, e `ATR`, `mult`, `neckline`, `p4` e distância ao falhar reteste.
  - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.
+
+#### Refatorações recentes (necklineconfirmada.py)
+- Debug padrão: `Config.DTB_DEBUG=False` e `Config.TTB_DEBUG=False` (desabilitado por padrão).
+- Estocástico: adicionada `Config.STOCH_DIVERGENCE_REQUIRES_OBOS` para tornar opcional a exigência de OB/OS na divergência.
+- is_head_extreme: agora exclui a própria barra do pivô da janela de contexto antes de calcular `max/min`, mantendo comparadores estritos (`>`/`<`) para garantir extremo único. Em caso de janela vazia após exclusão, falha fechada.
+- find_breakout_index: breakout estrito (`>` para alta e `<` para baixa).
+- detect_macd_signal_cross: regra flexibilizada — aceita cruzamento na direção correta dentro dos últimos `Config.MACD_CROSS_MAX_AGE_BARS` candles da janela; `MACD_CROSS_MAX_AGE_BARS=3` por padrão.
+- validate_and_score_hns_pattern:
+  - `valid_neckline_plana`: tolerância baseada na média das alturas dos dois ombros.
+  - `valid_base_tendencia`: exige p0 estritamente abaixo (OCO) ou acima (OCOI) dos níveis da neckline (sem tolerância de 5%).
+- Geração do CSV final:
+  - Atribuições com máscara usando `.loc` em ambos os lados para `chave_idx`.
+  - Preservação de todas as colunas: ordena `cols_info`, `cols_validacao`, `cols_pontos` e adiciona colunas restantes ao final.
+#### Logging padrão
+- Substituídos todos os `print(...)` por `logging` com configuração em `main()` para escrever em arquivo e console.
+- Arquivo de log: `logs/run.log` (diretório criado automaticamente).
+- Nível padrão: INFO (mudar via `logging.basicConfig` ou edição de código, se necessário).
+- Debug unificado: `_pattern_debug(pattern_type, msg)` usa `logging.debug` e persiste mensagens sanitizadas por padrão em `Config.DEBUG_DIR`:
+  - HNS → `hns_debug.log` (habilitado por `Config.HNS_DEBUG`)
+  - DT/DB → `dtb_debug.log` (ou `Config.DTB_DEBUG_FILE` se definido; habilitado por `Config.DTB_DEBUG`)
+  - TT/TB → `ttb_debug.log` (habilitado por `Config.TTB_DEBUG`)
+
+#### ZigZag — desempate e parametrização
+- Empates no mesmo índice em `calcular_zigzag_oficial`: tratamento explícito priorizando alternância (se último pivô foi `VALE`, um `PICO` no mesmo índice tem prioridade, e vice-versa). Em empate de tipo, mantém o mais extremo.
+- Parametrização do desvio mínimo de extensão via `Config.ZIGZAG_EXTENSION_DEVIATION_FACTOR` (default `0.25`); substitui o valor fixo previamente codificado.
 
 #### Epic 1: Indicadores modularizados (RF-001 a RF-004)
 - Centralizado em `Config` thresholds/pesos: RSI/RSI forte, Stochastic (K/D/smooth, zonas), lookbacks de cruzamentos, volume de breakout (N e multiplicador), janela de busca de breakout.
@@ -92,5 +122,18 @@ python src/patterns/analise/anotador_gui_erros.py
 #### Integração TT/TB (Topo/Fundo Triplo)
 - Novas funções: `identificar_padroes_ttb(pivots)` e `validate_and_score_triple_pattern(pattern, df)` reutilizam regras/indicadores do DTB (RSI/forte, MACD divergência + signal cross, Estocástico, OBV, volume de rompimento, ATR para reteste).
 - Pipeline (`main`): quando `--patterns` inclui `TTB` (ou `ALL`), detecta candidatos TT/TB e valida, anexando ao dataset final.
-- CSV final: acrescentadas colunas `tipo` (TT/TB), `score` (espelho de `score_total`) e `pivos` (lista compacta com `_idx/_preco` dos pivôs), além das `valid_*` já existentes.
-- Logs/Debug: com `Config.DTB_DEBUG=True`, imprime motivos de reprovação/aceite e `score` para TT/TB, similar ao DTB.
+- CSV final: TT/TB não adiciona mais chaves redundantes; usa apenas `padrao_tipo` e `score_total`.
+- CSV final: chave de unicidade agora usa `cabeca_idx` (HNS), `p3_idx` (DT/DB) e `p5_idx` (TT/TB).
+- TT/TB: escopo de varredura harmonizado com `RECENT_PATTERNS_LOOKBACK_COUNT` (somente candidatos recentes).
+- Logs/Debug: com `Config.TTB_DEBUG=True`, imprime motivos de reprovação/aceite e `score` para TT/TB (via `_pattern_debug`), similar ao DTB.
+
+#### Performance e correções (alta prioridade)
+- `calcular_indicadores(df)`: nova função que pré-calcula RSI (close/high/low), MACD (linha/sinal/hist), Estocástico, OBV e ATR uma vez por `df` e adiciona colunas no próprio DataFrame.
+- `main()`: após `buscar_dados(...)`, o DataFrame é enriquecido por `calcular_indicadores(df_historico)` antes da detecção/validação.
+- Funções de validação passam a ler colunas pré-calculadas, removendo recomputações internas de indicadores:
+  - `assess_rsi_divergence_strength`: usa `RSI_{len}_CLOSE|HIGH|LOW` conforme a série fonte.
+  - `detect_macd_signal_cross`: usa `MACD_*`/`MACDs_*` e varre toda a janela por qualquer cruzamento.
+  - `check_macd_divergence`: usa `MACDh_*` pré-computado.
+  - `check_stochastic_confirmation`: usa `STOCHk_*`/`STOCHd_*` pré-computados.
+  - Regras de reteste (`ATR`) usam coluna `ATR_14` pré-computada.
+- Benefícios: redução drástica de recomputações, melhoria de tempo de execução e consistência de resultados.
