@@ -165,9 +165,9 @@ class Config:
         'valid_volume_breakout_neckline': 10,
     }
     MINIMUM_SCORE_DTB = 70
-    DTB_SYMMETRY_TOLERANCE_FACTOR = 0.1
-    DTB_VALLEY_PEAK_DEPTH_RATIO = 0.15
-    DTB_TREND_MIN_DIFF_FACTOR = 0.05
+    DTB_SYMMETRY_TOLERANCE_FACTOR = 0.2
+    DTB_VALLEY_PEAK_DEPTH_RATIO = 0.1
+    DTB_TREND_MIN_DIFF_FACTOR = 0.02
 
     DEBUG_DIR = 'logs'
     DTB_DEBUG_FILE = os.path.join(DEBUG_DIR, 'dtb_debug.log')
@@ -228,8 +228,8 @@ class Config:
     HEAD_SIGNIFICANCE_RATIO = 1.1
     SHOULDER_SYMMETRY_TOLERANCE = 0.30
     NECKLINE_FLATNESS_TOLERANCE = 0.25
-    HEAD_EXTREME_LOOKBACK_FACTOR = 2
-    HEAD_EXTREME_LOOKBACK_MIN_BARS = 20
+    HEAD_EXTREME_LOOKBACK_FACTOR = 1
+    HEAD_EXTREME_LOOKBACK_MIN_BARS = 10
 
     RECENT_PATTERNS_LOOKBACK_COUNT = 1
     NECKLINE_RETEST_ATR_MULTIPLIER = 4
@@ -1561,10 +1561,30 @@ def validate_and_score_triple_pattern(pattern: Dict[str, Any], df_historico: pd.
     details['valid_contexto_extremos'] = bool(p1_ctx)
     if not details['valid_contexto_extremos']:
         if debug_ttb:
-            _pattern_debug(
-                tipo,
-                f"{Fore.YELLOW}TTB debug: fail at valid_contexto_extremos ({tipo}). p1={preco_p1:.6f}{Style.RESET_ALL}"
-            )
+            # Enriquecer log com janela de contexto (similar ao DTB)
+            try:
+                base_lookback = int(avg_pivot_dist_bars *
+                                    Config.HEAD_EXTREME_LOOKBACK_FACTOR)
+                lookback_bars = max(base_lookback, getattr(
+                    Config, 'HEAD_EXTREME_LOOKBACK_MIN_BARS', 30))
+                head_loc = df_historico.index.get_loc(p1['idx'])
+                start_loc = max(0, head_loc - lookback_bars)
+                end_loc = min(len(df_historico), head_loc + lookback_bars + 1)
+                context_df = df_historico.iloc[start_loc:end_loc]
+                ctx_high = context_df['high'].max(
+                ) if not context_df.empty else float('nan')
+                ctx_low = context_df['low'].min(
+                ) if not context_df.empty else float('nan')
+                _pattern_debug(
+                    tipo,
+                    f"{Fore.YELLOW}TTB debug: fail at valid_contexto_extremos ({tipo}). "
+                    f"lookback_bars={lookback_bars} p1_preco={preco_p1:.6f} ctx_high={ctx_high:.6f} ctx_low={ctx_low:.6f}{Style.RESET_ALL}"
+                )
+            except Exception:
+                _pattern_debug(
+                    tipo,
+                    f"{Fore.YELLOW}TTB debug: fail at valid_contexto_extremos ({tipo}). [context window calc error]{Style.RESET_ALL}"
+                )
         return None
 
     # Trend context (HL for TT, LH for TB) with tolerance

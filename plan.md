@@ -125,7 +125,7 @@ python src/patterns/analise/anotador_gui_erros.py
 - CSV final: TT/TB não adiciona mais chaves redundantes; usa apenas `padrao_tipo` e `score_total`.
 - CSV final: chave de unicidade agora usa `cabeca_idx` (HNS), `p3_idx` (DT/DB) e `p5_idx` (TT/TB).
 - TT/TB: escopo de varredura harmonizado com `RECENT_PATTERNS_LOOKBACK_COUNT` (somente candidatos recentes).
-- Logs/Debug: com `Config.TTB_DEBUG=True`, imprime motivos de reprovação/aceite e `score` para TT/TB (via `_pattern_debug`), similar ao DTB.
+- Logs/Debug: com `Config.TTB_DEBUG=True`, imprime motivos de reprovação/aceite e `score` para TT/TB (via `_pattern_debug`), similar ao DTB. Agora, ao falhar `valid_contexto_extremos` em TT/TB, o log inclui `lookback_bars`, `p1_preco`, `ctx_high` e `ctx_low`, igual ao DTB, facilitando diagnóstico de por que `p1` não foi extremo.
 
 #### Performance e correções (alta prioridade)
 - `calcular_indicadores(df)`: nova função que pré-calcula RSI (close/high/low), MACD (linha/sinal/hist), Estocástico, OBV e ATR uma vez por `df` e adiciona colunas no próprio DataFrame.
