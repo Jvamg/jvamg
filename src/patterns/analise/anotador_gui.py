@@ -102,17 +102,39 @@ class LabelingTool(tk.Tk):
         # rule maps by pattern type
         self.regras_map_hns: Dict[str, str] = {
             'valid_divergencia_rsi': 'Divergência RSI',
+            'valid_divergencia_rsi_strong': 'Divergência RSI (Forte)',
             'valid_divergencia_macd': 'Divergência MACD',
-            'valid_proeminencia_cabeca': 'Cabeça Proeminente',
+            'valid_macd_signal_cross': 'Cruzamento MACD vs Sinal',
+            'valid_estocastico_divergencia': 'Divergência Estocástico',
+            'valid_estocastico_cross': 'Cruzamento Estocástico',
             'valid_ombro_direito_fraco': 'Ombro Direito Fraco',
             'valid_perfil_volume': 'Perfil de Volume',
+            'valid_volume_breakout_neckline': 'Volume no Breakout da Neckline',
+            'valid_proeminencia_cabeca': 'Cabeça Proeminente',
         }
         self.regras_map_dtb: Dict[str, str] = {
             'valid_perfil_volume_decrescente': 'Perfil de Volume Decrescente',
             'valid_divergencia_obv': 'Divergência OBV',
             'valid_divergencia_rsi': 'Divergência RSI',
+            'valid_divergencia_rsi_strong': 'Divergência RSI (Forte)',
             'valid_divergencia_macd': 'Divergência MACD',
-            'valid_segundo_topo_menor': '2º Topo menor / Fundo maior',
+            'valid_macd_signal_cross': 'Cruzamento MACD vs Sinal',
+            'valid_estocastico_divergencia': 'Divergência Estocástico',
+            'valid_estocastico_cross': 'Cruzamento Estocástico',
+            'valid_extremo_secundario_fraco': '2º Topo menor / Fundo maior',
+            'valid_volume_breakout_neckline': 'Volume no Breakout da Neckline',
+        }
+        # Regras para Triple Top/Bottom (TT/TB) — somente confirmações opcionais
+        self.regras_map_ttb: Dict[str, str] = {
+            'valid_perfil_volume_decrescente': 'Perfil de Volume Decrescente',
+            'valid_divergencia_obv': 'Divergência OBV',
+            'valid_divergencia_rsi': 'Divergência RSI',
+            'valid_divergencia_rsi_strong': 'Divergência RSI (Forte)',
+            'valid_divergencia_macd': 'Divergência MACD',
+            'valid_macd_signal_cross': 'Cruzamento MACD vs Sinal',
+            'valid_estocastico_divergencia': 'Divergência Estocástico',
+            'valid_estocastico_cross': 'Cruzamento Estocástico',
+            'valid_volume_breakout_neckline': 'Volume no Breakout da Neckline',
         }
         self.max_rule_slots: int = len(self.regras_map_hns)
         if not self.setup_dataframe(arquivo_entrada, arquivo_saida):
@@ -331,21 +353,25 @@ class LabelingTool(tk.Tk):
                 [None] * num_rows, index=df.index)
             tipo_upper = tipo_series.astype(str).str.upper()
             is_hns = tipo_upper.isin(['OCO', 'OCOI'])
+            is_ttb = tipo_upper.isin(['TT', 'TB'])
 
             ombro1 = series_or_nat('ombro1_idx')
             ombro2 = series_or_nat('ombro2_idx')
             p0 = series_or_nat('p0_idx')
             p3 = series_or_nat('p3_idx')
+            p6 = series_or_nat('p6_idx')
 
             df['data_inicio'] = np.where(is_hns, ombro1, p0)
-            df['data_fim'] = np.where(is_hns, ombro2, p3)
+            df['data_fim'] = np.where(is_hns, ombro2, np.where(is_ttb, p6, p3))
 
             # 3) create data_cabeca/data_retest safely
             df['data_cabeca'] = series_or_nat('cabeca_idx')
-            # Map retest date by pattern type: H&S uses p6, DT/DB uses p4
+            # Map retest date by pattern type: H&S uses p6, DT/DB uses p4, TT/TB uses p6
             retest_hns = series_or_nat('retest_p6_idx')
             retest_dtb = series_or_nat('p4_idx')
-            df['data_retest'] = np.where(is_hns, retest_hns, retest_dtb)
+            retest_ttb = series_or_nat('p6_idx')
+            df['data_retest'] = np.where(
+                is_hns, retest_hns, np.where(is_ttb, retest_ttb, retest_dtb))
 
             # convert to datetime
             for col in ['data_inicio', 'data_fim', 'data_cabeca', 'data_retest']:
@@ -577,8 +603,12 @@ class LabelingTool(tk.Tk):
         self.score_label.config(text=f"SCORE FINAL: {score:.0f} / 100")
         # choose rule set by pattern type
         tipo = str(padrao.get('tipo_padrao', '')).upper()
-        regras_ativas = self.regras_map_hns if tipo in [
-            'OCO', 'OCOI'] else self.regras_map_dtb
+        if tipo in ['OCO', 'OCOI']:
+            regras_ativas = self.regras_map_hns
+        elif tipo in ['TT', 'TB']:
+            regras_ativas = self.regras_map_ttb
+        else:
+            regras_ativas = self.regras_map_dtb
 
         # clear bulletin slots
         for i in range(self.max_rule_slots):

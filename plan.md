@@ -86,6 +86,9 @@ python src/patterns/analise/anotador_gui_erros.py
 - DT/DB: logs de debug enriquecidos em `validate_and_score_double_pattern` reportando: tipos/preços dos pivôs ao falhar estrutura, janela de contexto/hi-lo ao falhar contexto, `min_sep` e preços ao falhar tendência, tolerância/altura/diff ao falhar simetria, e `ATR`, `mult`, `neckline`, `p4` e distância ao falhar reteste.
  - GUI (`anotador_gui.py`): `data_retest` agora mapeia `retest_p6_idx` para OCO/OCOI e `p4_idx` para DT/DB, permitindo destacar o reteste também nesses padrões.
 
+#### Alteração: TTB contexto de extremos (p1) olhando apenas para trás
+- Em `validate_and_score_triple_pattern`, a checagem `valid_contexto_extremos` do TTB passa a usar `is_head_extreme_past_only(...)`, que considera somente barras anteriores a `p1` (janela de tamanho idêntico à configuração vigente), em vez de uma janela centrada. O log de debug correspondente agora reporta `ctx_high/ctx_low` calculados somente no passado.
+
 #### Refatorações recentes (necklineconfirmada.py)
 - Debug padrão: `Config.DTB_DEBUG=False` e `Config.TTB_DEBUG=False` (desabilitado por padrão).
 - Estocástico: adicionada `Config.STOCH_DIVERGENCE_REQUIRES_OBOS` para tornar opcional a exigência de OB/OS na divergência.
@@ -137,3 +140,23 @@ python src/patterns/analise/anotador_gui_erros.py
   - `check_stochastic_confirmation`: usa `STOCHk_*`/`STOCHd_*` pré-computados.
   - Regras de reteste (`ATR`) usam coluna `ATR_14` pré-computada.
 - Benefícios: redução drástica de recomputações, melhoria de tempo de execução e consistência de resultados.
+
+#### Atualização: GUI de anotação com suporte a TTB
+- `src/patterns/analise/anotador_gui.py` agora reconhece padrões `TT`/`TB` gerados por `src/patterns/OCOs/necklineconfirmada.py`.
+- Ajustes:
+  - Novas regras `regras_map_ttb` exibidas no boletim: `valid_neckline_retest_p6`, `valid_neckline_plana`, `valid_simetria_extremos`, `valid_profundidade_vale_pico`, `valid_divergencia_rsi`.
+  - `data_fim` e `data_retest` passam a considerar `p6_idx` para TT/TB.
+  - Seleção dinâmica do conjunto de regras no painel (HNS, DTB ou TTB).
+- Requisitos de colunas no CSV para TTB: `p0_idx`, `p3_idx`, `p5_idx`, `p6_idx`, além das flags `valid_*` usadas no boletim.
+
+## Changelog (TTB/DTB/HNS tolerâncias) - ajuste de regras
+- Aumentado `DTB_SYMMETRY_TOLERANCE_FACTOR` de 0.20 → 0.35 para reduzir reprovações por simetria em TT/TB.
+- Reduzido `DTB_TREND_MIN_DIFF_FACTOR` de 0.02 → 0.01 para flexibilizar HL/LH mínimos em contexto de tendência (DTB/TTB).
+- Diminuído `HEAD_EXTREME_LOOKBACK_MIN_BARS` de 10 → 8 para contexto de extremo (p1) considerar janelas menores.
+- Aumentado `NECKLINE_RETEST_ATR_MULTIPLIER` de 4 → 5.0 para tolerância de reteste da neckline (HNS/DTB/TTB).
+- Alterado fallback de tolerância quando ATR indisponível: 0,5% → 1,0% do preço da neckline (HNS p6, DTB p4, TTB p6).
+- Desligado gate OB/OS do Estocástico (`STOCH_DIVERGENCE_REQUIRES_OBOS = False`) para ampliar confirmações opcionais.
+
+Impacto esperado:
+- Menos falsos negativos em TT/TB e DT/DB, mais candidatos aceitos quando estrutura é válida mas muito próxima dos limiares anteriores.
+- Logs `ttb_debug.log` devem mostrar queda nas falhas por `valid_simetria_extremos`, `valid_contexto_extremos` e `valid_neckline_retest_p6`.
