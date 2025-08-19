@@ -160,3 +160,22 @@ python src/patterns/analise/anotador_gui_erros.py
 Impacto esperado:
 - Menos falsos negativos em TT/TB e DT/DB, mais candidatos aceitos quando estrutura é válida mas muito próxima dos limiares anteriores.
 - Logs `ttb_debug.log` devem mostrar queda nas falhas por `valid_simetria_extremos`, `valid_contexto_extremos` e `valid_neckline_retest_p6`.
+
+---
+
+## Seção do Agente (fora do escopo principal)
+
+### Toolkits AGNO
+- `src/agente/coingeckoToolKit.py`: **FUNCIONANDO ✅** - Toolkit para dados de mercado de criptomoedas via CoinGecko API
+  - Função principal: `get_market_data(coin_id, vs_currency)` para preços, volume e capitalização de mercado
+  - **Modo Direto** (recomendado): Usa API key diretamente (`COINGECKO_API_KEY`) via Pro API (`pro-api.coingecko.com`)
+  - **Modo Proxy** (avançado): Via servidor proxy que consulta endpoint `/coins/markets` (`COINGECKO_PROXY_URL`)
+  - Detecção automática do modo baseada nas variáveis de ambiente disponíveis
+  - Formato de saída formatado com emojis e valores legíveis
+  - **Funcionalidades completas**: preços, mudança 24h, market cap, volume, sparkline
+  - Debug inteligente com logs limpos e informativos
+  - Documentação completa em `src/agente/README_COINGECKO.md`
+
+### Configuração do Agente
+- `src/agente/app.py`: Aplicação principal do agente usando AGNO framework
+- `src/agente/currency_converter.py`: Toolkit de conversão de moedas via UniRateAPI

@@ -5,3 +5,5 @@ pandas-ta==0.3.14b0
 matplotlib==3.10.3
 mplfinance==0.12.10b0
 colorama==0.4.6
+requests>=2.31.0
+python-dotenv>=1.0.0

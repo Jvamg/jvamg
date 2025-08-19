@@ -7,26 +7,18 @@ load_dotenv()
 
 
 class CurrencyConverterTools(Toolkit):
+    """
+    CurrencyConverterTools is a Python library for converting currencies.
+    It uses the UniRateAPI to convert currencies.
 
-    def __init__(
-        self,
-        fixed_max_results: Optional[int] = None,
-        fixed_language: Optional[str] = None,
-        headers: Optional[Any] = None,
-        proxy: Optional[str] = None,
-        timeout: Optional[int] = 10,
-        **kwargs,
-    ):
-        self.fixed_max_results: Optional[int] = fixed_max_results
-        self.fixed_language: Optional[str] = fixed_language
-        self.headers: Optional[Any] = headers
-        self.proxy: Optional[str] = proxy
+    Args:
+        timeout (Optional[int]): Timeout for the request, default is 10 seconds.
+    """
+
+    def __init__(self, timeout: Optional[int] = 10):
+        super().__init__(name="currency_converter_tools")
         self.timeout: Optional[int] = timeout
-
-        tools = []
-        tools.append(self.convert_usd_to_other)
-
-        super().__init__(name="currency_converter_tools", tools=tools, **kwargs)
+        self.register(self.convert_usd_to_other)
 
     def convert_usd_to_other(self, to_currency: str, amount: float = 1.0) -> str:
         """
