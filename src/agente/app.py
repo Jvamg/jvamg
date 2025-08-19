@@ -26,7 +26,11 @@ reasoning_agent = Agent(
         GoogleSearchTools(),
         CurrencyConverterTools()
     ],
-    instructions="search in web to get tickers to the stock or coin name to use in get_current_stock_price, if necessary, use convert_usd_to_other to convert the amount to the target currency",
+    instructions=[
+        "Use YFinanceTools to get the price of the stock or coin",
+        "Use GoogleSearchTools to get tickers to the stock or coin name",
+        "Use CurrencyConverterTools to convert the amount to the target currency",
+        "Use ReasoningTools to reason about the information",],
     storage=SqliteStorage(table_name="web_agent", db_file=agent_storage),
     add_datetime_to_instructions=True,
     add_history_to_messages=True,
