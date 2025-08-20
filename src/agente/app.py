@@ -3,9 +3,8 @@ from agno.tools.googlesearch import GoogleSearchTools
 from coingeckoToolKit import CoinGeckoToolKit
 from agno.playground import Playground
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.reasoning import ReasoningTools
-from agno.models.google import Gemini
+from agno.models.openrouter import OpenRouter
 from agno.agent import Agent
 from dotenv import load_dotenv
 load_dotenv()
@@ -14,7 +13,7 @@ load_dotenv()
 agent_storage: str = "tmp/agents.db"
 
 reasoning_agent = Agent(
-    model=Gemini(id="gemini-1.5-pro"),
+    model=OpenRouter(id="anthropic/claude-3.5-haiku"),
     tools=[
         ReasoningTools(add_instructions=True),
         GoogleSearchTools(),
