@@ -166,16 +166,35 @@ Impacto esperado:
 ## Seção do Agente (fora do escopo principal)
 
 ### Toolkits AGNO
-- `src/agente/coingeckoToolKit.py`: **FUNCIONANDO ✅** - Toolkit para dados de mercado de criptomoedas via CoinGecko API
-  - Função principal: `get_market_data(coin_id, vs_currency)` para preços, volume e capitalização de mercado
-  - **Modo Direto** (recomendado): Usa API key diretamente (`COINGECKO_API_KEY`) via Pro API (`pro-api.coingecko.com`)
-  - **Modo Proxy** (avançado): Via servidor proxy que consulta endpoint `/coins/markets` (`COINGECKO_PROXY_URL`)
+- `src/agente/coingeckoToolKit.py`: **FUNCIONANDO ✅** - Toolkit completo para dados de criptomoedas via CoinGecko API
+  
+  **Funcionalidades Disponíveis:**
+  - `get_market_data(coin_id, vs_currency)`: Dados de mercado básicos (preços, volume, market cap)
+  - `get_coin_data(coin_id)`: Dados completos de uma criptomoeda (descrição, links, métricas abrangentes)
+  - `get_coin_history(coin_id, date)`: Dados históricos para uma data específica (formato DD-MM-YYYY)
+  - `get_coin_chart(coin_id, vs_currency, days)`: Dados históricos para gráficos (série temporal)
+  - `get_coin_ohlc(coin_id, vs_currency, days)`: Dados OHLC/candlestick para análise técnica
+  - `get_trending()`: Top 7 criptomoedas em tendência nas buscas do CoinGecko
+  - `get_coins_list(include_platform)`: Lista completa de todas as criptomoedas suportadas
+  
+  **Características Técnicas:**
+  - **Modo Duplo**: Suporte tanto para API key direta quanto servidor proxy
+  - **Modo Direto**: Usa `COINGECKO_API_KEY` via Pro API (`pro-api.coingecko.com`)
+  - **Modo Proxy**: Via `COINGECKO_PROXY_URL` para setup com servidor intermediário
   - Detecção automática do modo baseada nas variáveis de ambiente disponíveis
-  - Formato de saída formatado com emojis e valores legíveis
-  - **Funcionalidades completas**: preços, mudança 24h, market cap, volume, sparkline
-  - Debug inteligente com logs limpos e informativos
+  - Tratamento robusto de erros e timeouts configuráveis
+  - Formatação consistente com emojis e valores legíveis
+  - Debug inteligente com logs detalhados para troubleshooting
   - Documentação completa em `src/agente/README_COINGECKO.md`
 
 ### Configuração do Agente
 - `src/agente/app.py`: Aplicação principal do agente usando AGNO framework
+  
+  **Instruções Detalhadas do Agente (Atualizadas):**
+  - **Search & Discovery**: Usa GoogleSearchTools para buscar tickers/nomes + get_coins_list() para IDs corretos + get_trending() para descobrir moedas populares
+  - **Market Data**: get_market_data() para preços atuais/volume/market cap + get_coin_data() para informações completas com descrição/website/ranking
+  - **Historical Analysis**: get_coin_history() para datas específicas + get_coin_chart() para análise de tendências + get_coin_ohlc() para dados candlestick/análise técnica
+  - **Analysis & Reasoning**: ReasoningTools para interpretar dados, comparar cryptos, fornecer insights + conversão para moedas preferidas do usuário
+  - **Response Guidelines**: Formatação clara com emojis/símbolos + contexto sobre market cap rank/volume + disclaimers sobre não ser conselho financeiro + explicações simples para análise técnica
+
 - `src/agente/currency_converter.py`: Toolkit de conversão de moedas via UniRateAPI
