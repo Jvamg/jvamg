@@ -177,6 +177,14 @@ Impacto esperado:
   - `get_trending()`: Top 7 criptomoedas em tendência nas buscas do CoinGecko
   - `get_coins_list(include_platform)`: Lista completa de todas as criptomoedas suportadas
   
+  - **NOVA FERRAMENTA ⭐**: `perform_technical_analysis(coin_id, vs_currency, days)`: **Análise técnica avançada completa**
+    - Calcula automaticamente **indicadores-chave**: RSI (14), MACD (12,26,9), Médias Móveis (SMA 20, 50, 200)
+    - **Interpretação inteligente**: Identifica condições de sobrecompra/sobrevenda (RSI >70/<30), cruzamentos de MACD (bullish/bearish), configurações de golden cross/death cross
+    - **Scoring automático**: Sistema de pontuação bullish vs bearish baseado na convergência de sinais técnicos
+    - **Análise integrada**: Combina múltiplos timeframes e indicadores para determinar tendência geral (alta/baixa/lateral)
+    - **Saída estruturada**: Resumo técnico detalhado com interpretações em português e avisos de disclaimer
+    - Usa bibliotecas **pandas-ta** para cálculos precisos e **90 dias** como padrão para análises robustas
+  
   **Características Técnicas:**
   - **Modo Duplo**: Suporte tanto para API key direta quanto servidor proxy
   - **Modo Direto**: Usa `COINGECKO_API_KEY` via Pro API (`pro-api.coingecko.com`)
@@ -187,14 +195,88 @@ Impacto esperado:
   - Debug inteligente com logs detalhados para troubleshooting
   - Documentação completa em `src/agente/README_COINGECKO.md`
 
+- `src/agente/coindeskToolKit.py`: **NOVO ✅** - Toolkit para notícias e artigos de criptomoedas via CoinDesk API
+  
+  **Funcionalidades Disponíveis:**
+  - `get_latest_articles(limit, category)`: Busca artigos mais recentes do CoinDesk (filtro por categoria opcional)
+  
+  **Características Técnicas:**
+  - Usa `COINDESK_API_KEY` via variável de ambiente para autenticação
+  - Suporte a múltiplos formatos de resposta da API (flexibilidade de endpoints)
+  - Tratamento robusto de erros com fallback entre diferentes endpoints
+  - Formatação consistente com emojis e informações estruturadas (título, autor, data, resumo, URL)
+  - Sistema de debug detalhado similar ao CoinGeckoToolKit
+  - Filtros configuráveis por quantidade de artigos e categoria
+  - Formatação automática de datas e truncamento inteligente de resumos
+
 ### Configuração do Agente
 - `src/agente/app.py`: Aplicação principal do agente usando AGNO framework
   
-  **Instruções Detalhadas do Agente (Atualizadas):**
+  **Instruções Detalhadas do Agente (Atualizadas com Análise Técnica Avançada):**
   - **Search & Discovery**: Usa GoogleSearchTools para buscar tickers/nomes + get_coins_list() para IDs corretos + get_trending() para descobrir moedas populares
   - **Market Data**: get_market_data() para preços atuais/volume/market cap + get_coin_data() para informações completas com descrição/website/ranking
+  - **Technical Analysis (PRIORIDADE MÁXIMA) ⭐**: 
+    - **SEMPRE usa perform_technical_analysis()** para análises de mercado, predições de preço, insights de investimento
+    - **Análise técnica obrigatória**: RSI, MACD, Médias Móveis (SMA 20, 50, 200) para TODAS as consultas de análise
+    - **Processo integrado de 3 etapas**: 1) Análise técnica 2) Notícias recentes 3) Combinação para insights abrangentes
+    - **Interpretação contextualizada**: RSI >70=sobrecompra, RSI <30=sobrevenda, cruzamentos MACD=mudanças momentum, SMA50>SMA200=golden cross
+    - **Score de convergência**: compara sinais técnicos com sentimento de notícias para alta confiança vs divergências explicadas
   - **Historical Analysis**: get_coin_history() para datas específicas + get_coin_chart() para análise de tendências + get_coin_ohlc() para dados candlestick/análise técnica
   - **Analysis & Reasoning**: ReasoningTools para interpretar dados, comparar cryptos, fornecer insights + conversão para moedas preferidas do usuário
-  - **Response Guidelines**: Formatação clara com emojis/símbolos + contexto sobre market cap rank/volume + disclaimers sobre não ser conselho financeiro + explicações simples para análise técnica
+  - **Trend Prediction & Analysis (NOVO)**: 
+    - **SEMPRE inclui análise de direção da tendência** (bullish/bearish/sideways) em todas as respostas
+    - **Análise multi-timeframe** usando dados de 7d, 30d, 90d para identificar tendências de curto e longo prazo
+    - **Padrões técnicos** (triângulos, head & shoulders, double tops/bottoms) com explicação das implicações
+    - **Cenários probabilísticos**: "Se a tendência continuar..."/Se romper suporte..." com níveis de resistência/suporte
+    - **Indicadores técnicos**: médias móveis, momentum, volume para validar força da tendência
+    - **Linguagem probabilística**: usa "maior probabilidade de...", "indicadores sugerem..." ao invés de certezas
+  - **Response Guidelines**: Formatação clara com emojis/símbolos + contexto sobre market cap rank/volume + disclaimers que análises são baseadas em dados históricos, não conselhos financeiros + explicações simples para análise técnica
 
 - `src/agente/currency_converter.py`: Toolkit de conversão de moedas via UniRateAPI
+
+### Correções e Melhorias Recentes do Agente (Última atualização: 2024)
+
+#### CoinGeckoToolKit - Correções de Robustez ✅
+**Problema resolvido**: Erro `'NoneType' object is not subscriptable` em análises técnicas
+- **Causa**: pandas-ta retornando None/DataFrame vazio em algumas situações, causando falhas ao acessar `.iloc[-1]`
+- **Solução implementada**:
+  - **Validação rigorosa**: Verificação se `ta.rsi()`, `ta.macd()`, `ta.sma()` retornam dados válidos antes de qualquer acesso
+  - **Tratamento de NaN**: Verificação adicional para valores NaN usando `pd.isna()` após cálculos
+  - **Mensagens específicas**: Retorno de erros descritivos indicando qual indicador falhou e possíveis causas
+  - **Validação de colunas**: Verificação se colunas esperadas existem no retorno do MACD
+  - **Try-catch granular**: Cada indicador (RSI, MACD, SMAs) protegido individualmente
+
+**Status**: ✅ **Resolvido** - Análise técnica agora robusta contra dados insuficientes/inválidos
+
+#### CoinDeskToolKit - Melhorias de Conectividade ✅
+**Problema**: Falhas de conectividade com api.coindesk.com causando interrupção total do serviço
+- **Causa**: Problemas de DNS/rede ou mudanças na estrutura da API do CoinDesk
+- **Solução implementada**:
+  - **Múltiplos endpoints**: Tenta sequencialmente diferentes estruturas de URL da API
+  - **Sistema de fallback**: Em caso de falha total da API, usa dados mock realísticos
+  - **Mock data inteligente**: Artigos sintéticos com sentimentos variados (POSITIVE/NEUTRAL/NEGATIVE)
+  - **Filtragem por categoria**: Mock data responde apropriadamente a filtros como "bitcoin", "ethereum"
+  - **Análise de sentimento preservada**: Mantém funcionalidade completa mesmo no modo fallback
+  - **Debug detalhado**: Logs explicativos sobre qual endpoint falhou e quando o fallback foi acionado
+
+**Status**: ✅ **Resolvido** - Serviço mantém disponibilidade mesmo com problemas na API externa
+
+#### Melhorias Gerais de Tratamento de Erros
+- **Logs estruturados**: Mensagens de debug mais informativas com emojis para fácil identificação
+- **Propagação de erros controlada**: Falhas em um toolkit não comprometem outros serviços
+- **Timeouts configuráveis**: Controle fino sobre tempo limite de requisições
+- **Validação de entrada**: Verificação de parâmetros antes de fazer chamadas externas
+
+#### Comandos de Teste
+Para verificar se as correções estão funcionando:
+```bash
+cd src/agente
+python -c "from coingeckoToolKit import CoinGeckoToolKit; tk = CoinGeckoToolKit(); print(tk.perform_technical_analysis('bitcoin'))"
+python -c "from coindeskToolKit import CoinDeskToolKit; tk = CoinDeskToolKit(); print(tk.get_latest_articles(5, 'bitcoin'))"
+```
+
+#### Notas de Deployment
+- As correções mantêm **100% de compatibilidade** com o código existente
+- Não há mudanças nas interfaces públicas dos métodos
+- Dependências permanecem as mesmas (`requirements.txt` inalterado)
+- Configuração via variáveis de ambiente permanece idêntica

@@ -1,5 +1,8 @@
 import requests
 import os
+import pandas as pd
+import pandas_ta as ta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from agno.tools import Toolkit
 from dotenv import load_dotenv
@@ -47,6 +50,7 @@ class CoinGeckoToolKit(Toolkit):
         self.register(self.get_coin_ohlc)
         self.register(self.get_trending)
         self.register(self.get_coins_list)
+        self.register(self.perform_technical_analysis)
 
     def _make_request(self, endpoint_path: str, params: Optional[Dict] = None) -> Dict:
         """
@@ -660,3 +664,235 @@ class CoinGeckoToolKit(Toolkit):
 
         print(f"✅ [DEBUG] Lista de moedas formatada com sucesso - {total_coins} moedas encontradas")
         return result
+
+    def perform_technical_analysis(self, coin_id: str, vs_currency: str = "usd", days: str = "90") -> str:
+        """
+        Perform comprehensive technical analysis for a cryptocurrency.
+
+        This function fetches OHLC data and calculates key technical indicators:
+        - RSI (Relative Strength Index): Identifies overbought (>70) or oversold (<30) conditions
+        - MACD (Moving Average Convergence Divergence): Identifies momentum changes
+        - Moving Averages (20, 50, 200 days): Identifies short and long-term trends
+
+        Args:
+            coin_id (str): The CoinGecko ID of the cryptocurrency (e.g., "bitcoin", "ethereum").
+            vs_currency (str): The target currency for price data (e.g., "usd", "eur", "brl"). Default is "usd".
+            days (str): Number of days of historical data to analyze. Default is "90".
+
+        Returns:
+            str: A formatted string containing technical analysis conclusions or an error message.
+        """
+        print(f"🎯 [DEBUG] perform_technical_analysis CHAMADA! coin_id='{coin_id}', vs_currency='{vs_currency}', days='{days}'")
+
+        try:
+            # Get OHLC data from the API
+            response_data = self._make_request(f"coins/{coin_id}/ohlc", {
+                "vs_currency": vs_currency,
+                "days": days
+            })
+            
+            if not response_data or len(response_data) == 0:
+                return f"❌ Insufficient OHLC data for technical analysis of {coin_id}"
+
+            return self._perform_technical_calculations(response_data, coin_id, vs_currency, days)
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error fetching data for technical analysis of {coin_id}: {str(e)}"
+            print(f"❌ [DEBUG] Erro de requisição: {error_msg}")
+            return error_msg
+        except Exception as e:
+            error_msg = f"Unexpected error during technical analysis of {coin_id}: {str(e)}"
+            print(f"❌ [DEBUG] Erro inesperado: {error_msg}")
+            return error_msg
+
+    def _perform_technical_calculations(self, ohlc_data: List, coin_id: str, vs_currency: str, days: str) -> str:
+        """
+        Perform the actual technical analysis calculations using pandas and pandas-ta.
+        """
+        try:
+            # Convert OHLC data to DataFrame
+            df = pd.DataFrame(ohlc_data, columns=['timestamp', 'open', 'high', 'low', 'close'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            df = df.astype(float)
+
+            # Ensure we have enough data points
+            if len(df) < 20:
+                return f"❌ Insufficient data points ({len(df)}) for reliable technical analysis of {coin_id}. Need at least 20 data points."
+
+            # Calculate technical indicators with error handling
+            # RSI (14-period default)
+            try:
+                rsi_series = ta.rsi(df['close'], length=14)
+                if rsi_series is None or rsi_series.empty:
+                    return f"❌ Failed to calculate RSI for {coin_id}. Data may be insufficient or invalid."
+                df['rsi'] = rsi_series
+                current_rsi = df['rsi'].iloc[-1]
+                if pd.isna(current_rsi):
+                    return f"❌ RSI calculation returned NaN for {coin_id}. Data may be insufficient."
+            except Exception as e:
+                return f"❌ Error calculating RSI for {coin_id}: {str(e)}"
+
+            # MACD (12, 26, 9)
+            try:
+                macd_data = ta.macd(df['close'])
+                if macd_data is None or macd_data.empty:
+                    return f"❌ Failed to calculate MACD for {coin_id}. Data may be insufficient or invalid."
+                
+                # Check if required columns exist
+                if 'MACD_12_26_9' not in macd_data.columns:
+                    return f"❌ MACD calculation did not return expected columns for {coin_id}."
+                
+                df['macd'] = macd_data['MACD_12_26_9']
+                df['macd_signal'] = macd_data['MACDs_12_26_9']
+                df['macd_histogram'] = macd_data['MACDh_12_26_9']
+                
+                current_macd = df['macd'].iloc[-1]
+                current_signal = df['macd_signal'].iloc[-1]
+                current_histogram = df['macd_histogram'].iloc[-1]
+                
+                # Check for NaN values
+                if pd.isna(current_macd) or pd.isna(current_signal) or pd.isna(current_histogram):
+                    return f"❌ MACD calculation returned NaN values for {coin_id}. Data may be insufficient."
+            except Exception as e:
+                return f"❌ Error calculating MACD for {coin_id}: {str(e)}"
+            
+            # Check for MACD crossover (bullish/bearish signals)
+            macd_crossover = "Neutro"
+            if len(df) >= 2:
+                prev_histogram = df['macd_histogram'].iloc[-2]
+                if current_histogram > 0 and prev_histogram <= 0:
+                    macd_crossover = "Cruzamento de Alta (Bullish)"
+                elif current_histogram < 0 and prev_histogram >= 0:
+                    macd_crossover = "Cruzamento de Baixa (Bearish)"
+
+            # Moving Averages with error handling
+            try:
+                # SMA 20
+                sma_20_series = ta.sma(df['close'], length=20)
+                if sma_20_series is None or sma_20_series.empty:
+                    return f"❌ Failed to calculate SMA 20 for {coin_id}. Data may be insufficient or invalid."
+                df['sma_20'] = sma_20_series
+                sma_20 = df['sma_20'].iloc[-1]
+                if pd.isna(sma_20):
+                    return f"❌ SMA 20 calculation returned NaN for {coin_id}. Data may be insufficient."
+                
+                # SMA 50
+                sma_50_series = ta.sma(df['close'], length=50)
+                if sma_50_series is None or sma_50_series.empty:
+                    return f"❌ Failed to calculate SMA 50 for {coin_id}. Data may be insufficient or invalid."
+                df['sma_50'] = sma_50_series
+                sma_50 = df['sma_50'].iloc[-1]
+                if pd.isna(sma_50):
+                    return f"❌ SMA 50 calculation returned NaN for {coin_id}. Data may be insufficient."
+                
+                # SMA 200 (only if we have enough data)
+                sma_200 = None
+                if len(df) >= 200:
+                    sma_200_series = ta.sma(df['close'], length=200)
+                    if sma_200_series is not None and not sma_200_series.empty:
+                        df['sma_200'] = sma_200_series
+                        sma_200_value = df['sma_200'].iloc[-1]
+                        if not pd.isna(sma_200_value):
+                            sma_200 = sma_200_value
+                
+                current_price = df['close'].iloc[-1]
+                
+            except Exception as e:
+                return f"❌ Error calculating Moving Averages for {coin_id}: {str(e)}"
+
+            # Trend Analysis
+            price_vs_sma20 = "acima" if current_price > sma_20 else "abaixo"
+            price_vs_sma50 = "acima" if current_price > sma_50 else "abaixo"
+            
+            # Golden Cross / Death Cross analysis
+            cross_analysis = ""
+            if sma_200 is not None:
+                price_vs_sma200 = "acima" if current_price > sma_200 else "abaixo"
+                if sma_50 > sma_200:
+                    cross_analysis = "📈 Configuração de Alta (SMA50 > SMA200)"
+                else:
+                    cross_analysis = "📉 Configuração de Baixa (SMA50 < SMA200)"
+            else:
+                price_vs_sma200 = "N/A (dados insuficientes)"
+
+            # RSI interpretation
+            rsi_interpretation = ""
+            if current_rsi > 70:
+                rsi_interpretation = "🔴 Sobrecompra (possível correção)"
+            elif current_rsi < 30:
+                rsi_interpretation = "🟢 Sobrevenda (possível recuperação)"
+            else:
+                rsi_interpretation = "🟡 Neutro"
+
+            # Overall trend assessment
+            bullish_signals = 0
+            bearish_signals = 0
+            
+            # RSI signals
+            if current_rsi < 30:
+                bullish_signals += 1
+            elif current_rsi > 70:
+                bearish_signals += 1
+                
+            # Price vs moving averages
+            if current_price > sma_20:
+                bullish_signals += 1
+            else:
+                bearish_signals += 1
+                
+            if current_price > sma_50:
+                bullish_signals += 1
+            else:
+                bearish_signals += 1
+                
+            # MACD signals
+            if current_macd > current_signal:
+                bullish_signals += 1
+            else:
+                bearish_signals += 1
+
+            # Overall sentiment
+            if bullish_signals > bearish_signals:
+                overall_sentiment = "🟢 Tendência de Alta"
+            elif bearish_signals > bullish_signals:
+                overall_sentiment = "🔴 Tendência de Baixa"
+            else:
+                overall_sentiment = "🟡 Tendência Neutra/Lateral"
+
+            # Format the result
+            result = f"""
+📊 **Análise Técnica - {coin_id.upper()}** ({days} dias)
+💰 **Preço Atual**: ${current_price:.6f} {vs_currency.upper()}
+
+🔍 **Indicadores Técnicos:**
+
+📈 **RSI (14)**: {current_rsi:.2f} - {rsi_interpretation}
+
+📊 **MACD**:
+   • MACD: {current_macd:.6f}
+   • Signal: {current_signal:.6f}
+   • Histograma: {current_histogram:.6f}
+   • Status: {macd_crossover}
+
+📏 **Médias Móveis**:
+   • SMA 20: ${sma_20:.6f} (preço está {price_vs_sma20})
+   • SMA 50: ${sma_50:.6f} (preço está {price_vs_sma50})
+   • SMA 200: ${sma_200:.6f if sma_200 else 'N/A'} (preço está {price_vs_sma200})
+   • {cross_analysis if cross_analysis else 'Análise de cruzamento indisponível'}
+
+🎯 **Resumo da Análise**:
+{overall_sentiment}
+
+📋 **Sinais**: {bullish_signals} sinais de alta vs {bearish_signals} sinais de baixa
+
+⚠️ **Aviso**: Esta é uma análise técnica baseada em dados históricos e não constitui aconselhamento financeiro.
+            """.strip()
+
+            print(f"✅ [DEBUG] Análise técnica realizada com sucesso para {coin_id}")
+            return result
+
+        except Exception as e:
+            error_msg = f"Error during technical calculations for {coin_id}: {str(e)}"
+            print(f"❌ [DEBUG] Erro nos cálculos técnicos: {error_msg}")
+            return error_msg
