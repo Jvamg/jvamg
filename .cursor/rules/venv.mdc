@@ -1,0 +1,5 @@
+---
+description:"Always use & c:/Users/jvamg/Documents/fds/jvamg/.venv/Scripts/Activate.ps1 before any prompt on terminal"
+globs:
+alwaysApply: true
+---

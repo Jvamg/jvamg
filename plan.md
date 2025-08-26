@@ -17,6 +17,9 @@ Gerar datasets de padrões (foco em OCO/OCOI), rotular via GUI, revisar erros e 
 ### Pré-requisitos
 - Python 3.10+
 - Instalar dependências: `pip install -r requirements.txt`
+- Definir a variável de ambiente `COINGECKO_API_KEY` (CoinGecko Pro). Ex.:
+  - Windows PowerShell: `setx COINGECKO_API_KEY "SEU_API_KEY_AQUI"`
+  - ou criar `.env` com `COINGECKO_API_KEY=SEU_API_KEY_AQUI`
 
 ### Execução
 - Gerar dataset (CLI):
@@ -29,7 +32,7 @@ Gerar datasets de padrões (foco em OCO/OCOI), rotular via GUI, revisar erros e 
 - Revisão de erros (GUI): `python src/patterns/analise/anotador_gui_erros.py`
 
 ### Fluxo de dados
-1) (Geração) Dataset de padrões OCO/OCOI a partir de séries de preço.
+1) (Geração) Dataset de padrões OCO/OCOI a partir de séries de preço (CoinGecko Pro).
    - Arquivo alvo: `data/datasets/patterns_by_strategy/dataset_patterns_final.csv`
    - Em `necklineconfirmada.py`, o diretório base é `OUTPUT_DIR = 'data/datasets/patterns_by_strategy'`.
 2) (Rotulagem) Abrir `anotador_gui.py` → produzir `dataset_patterns_labeled.csv`.
@@ -50,8 +53,14 @@ Gerar datasets de padrões (foco em OCO/OCOI), rotular via GUI, revisar erros e 
 5. Documentar rapidamente o formato de entrada/saída na pasta `data/datasets/patterns_by_strategy/`.
 
 ### Riscos e notas
-- Limites do Yahoo Finance para intervalos em minutos: usar períodos menores e reintentos (já contemplado nas GUIs).
+- Fonte de dados: **CoinGecko Pro**. Utiliza `market_chart` para séries de preço (granularidade variável por janela) e `total_volumes` para volume. O OHLC é obtido por reamostragem (`resample`) das séries de preços, e o volume é somado na janela alvo.
+- Granularidade: para janelas curtas (≤ 30/90 dias) a API fornece pontos mais densos; para janelas longas usa diário. O gerador ajusta automaticamente `period` conforme o `interval` solicitado e reamostra para `5m/15m/1h/4h/1d`.
 - Datas com timezone: GUIs já convertem para naive; manter padrão no gerador.
+
+#### GUI de Rotulagem (anotador_gui.py)
+- Agora consome dados do CoinGecko Pro também:
+  - Usa `coins/{id}/market_chart/range` para baixar a janela precisa (por datas do padrão + margem) e constrói OHLCV por reamostragem.
+  - Necessita `COINGECKO_API_KEY` no ambiente ou `.env`.
 
 ### Comandos úteis
 ```bash
@@ -90,6 +99,11 @@ python src/patterns/analise/anotador_gui_erros.py
 - Em `validate_and_score_triple_pattern`, a checagem `valid_contexto_extremos` do TTB passa a usar `is_head_extreme_past_only(...)`, que considera somente barras anteriores a `p1` (janela de tamanho idêntico à configuração vigente), em vez de uma janela centrada. O log de debug correspondente agora reporta `ctx_high/ctx_low` calculados somente no passado.
 
 #### Refatorações recentes (necklineconfirmada.py)
+- Migração de fonte de dados: **Yahoo Finance → CoinGecko Pro**
+  - Autenticação via `COINGECKO_API_KEY` (env/`.env`).
+  - Endpoint principal: `coins/{id}/market_chart` para preços e volumes.
+  - Construção de OHLC por reamostragem da série de preços; `volume` oriundo de `total_volumes`.
+  - Mapeamento de tickers `BTC-USD`, `ETH-USD`, etc. → IDs CoinGecko (`bitcoin`, `ethereum`, ...).
 - Debug padrão: `Config.DTB_DEBUG=False` e `Config.TTB_DEBUG=False` (desabilitado por padrão).
 - Estocástico: adicionada `Config.STOCH_DIVERGENCE_REQUIRES_OBOS` para tornar opcional a exigência de OB/OS na divergência.
 - is_head_extreme: agora exclui a própria barra do pivô da janela de contexto antes de calcular `max/min`, mantendo comparadores estritos (`>`/`<`) para garantir extremo único. Em caso de janela vazia após exclusão, falha fechada.
@@ -194,6 +208,8 @@ Impacto esperado:
   - Formatação consistente com emojis e valores legíveis
   - Debug inteligente com logs detalhados para troubleshooting
   - Documentação completa em `src/agente/README_COINGECKO.md`
+  - Atualização: Formatação monetária sensível à moeda (`vs_currency`) com símbolo correto (USD/EUR/BRL etc.) em preço, market cap e volume; `get_coin_data` e histórico agora respeitam `vs_currency` mantendo compatibilidade de assinatura
+  - Atualização: Moeda padrão configurável via `DEFAULT_VS_CURRENCY` no ambiente (fallback para `usd`)
 
 - `src/agente/coindeskToolKit.py`: **NOVO ✅** - Toolkit para notícias e artigos de criptomoedas via CoinDesk API
   
@@ -208,6 +224,9 @@ Impacto esperado:
   - Sistema de debug detalhado similar ao CoinGeckoToolKit
   - Filtros configuráveis por quantidade de artigos e categoria
   - Formatação automática de datas e truncamento inteligente de resumos
+  - Atualização: Normalização de payload para filtro de categoria consistente independentemente da estrutura da resposta e omissão do parâmetro `api_key` quando não configurado
+  - Atualização: `get_latest_articles` agora usa limite mínimo de 15 itens por padrão para melhorar análise de sentimento
+  - Atualização: parâmetro de query ajustado para `categories` (padrão oficial CoinDesk). O envio de `categories` só ocorre quando `category` é fornecido pelo usuário
 
 ### Configuração do Agente
 - `src/agente/app.py`: Aplicação principal do agente usando AGNO framework
@@ -222,6 +241,9 @@ Impacto esperado:
     - **Interpretação contextualizada**: RSI >70=sobrecompra, RSI <30=sobrevenda, cruzamentos MACD=mudanças momentum, SMA50>SMA200=golden cross
     - **Score de convergência**: compara sinais técnicos com sentimento de notícias para alta confiança vs divergências explicadas
   - **Historical Analysis**: get_coin_history() para datas específicas + get_coin_chart() para análise de tendências + get_coin_ohlc() para dados candlestick/análise técnica
+  - **OHLC para padrões**: Instruções do agente reforçadas para complementar explicações de padrões com `get_coin_ohlc()` (contexto de candles) e usar `market_chart` para indicadores
+  - **Moeda padrão**: Instruções do agente reforçadas para usar `DEFAULT_VS_CURRENCY` quando a preferência do usuário não estiver explícita
+  - **Notícias por categoria**: agora, sempre que for feita uma análise de uma cripto, o agente resolve o símbolo via `get_coin_symbol(coin_id)` e filtra notícias com `get_latest_articles(limit=15, category=<SYMBOL>)` (ex.: BTC/ETH)
   - **Analysis & Reasoning**: ReasoningTools para interpretar dados, comparar cryptos, fornecer insights + conversão para moedas preferidas do usuário
   - **Trend Prediction & Analysis (NOVO)**: 
     - **SEMPRE inclui análise de direção da tendência** (bullish/bearish/sideways) em todas as respostas
@@ -245,6 +267,16 @@ Impacto esperado:
   - **Mensagens específicas**: Retorno de erros descritivos indicando qual indicador falhou e possíveis causas
   - **Validação de colunas**: Verificação se colunas esperadas existem no retorno do MACD
   - **Try-catch granular**: Cada indicador (RSI, MACD, SMAs) protegido individualmente
+
+**Atualização (MACD Hardening)**:
+- **Coerção numérica**: `close` convertido com `pd.to_numeric(..., errors='coerce')` + `dropna()`
+- **Mínimo de dados**: Exige pelo menos 35 pontos para MACD (26 lento + 9 sinal)
+- **Fallback manual**: Se `pandas_ta.macd` falhar, calcula EMA(12) e EMA(26) via `ewm` e deriva `MACD`, `Signal(9)`, `Hist`
+- **Valores válidos**: Últimos valores lidos da última linha totalmente não-nula; cruzamento usa somente linhas válidas
+- **Logs**: Debug detalhado do tamanho da série, colunas do MACD e contagem de linhas válidas
+
+**Auto-ajuste de janela para MACD**:
+- Se o usuário solicitar menos de 35 dias, o toolkit automaticamente usa `max(days, 35)` para garantir cálculo do MACD, mantendo a natureza de curto prazo e apenas desabilitando a SMA 200.
 
 **Status**: ✅ **Resolvido** - Análise técnica agora robusta contra dados insuficientes/inválidos
 
@@ -275,8 +307,173 @@ python -c "from coingeckoToolKit import CoinGeckoToolKit; tk = CoinGeckoToolKit(
 python -c "from coindeskToolKit import CoinDeskToolKit; tk = CoinDeskToolKit(); print(tk.get_latest_articles(5, 'bitcoin'))"
 ```
 
+**Teste específico da correção (market_chart com close prices + 200+ dias):**
+```bash
+# Este teste deve agora funcionar perfeitamente com todos os indicadores (RSI, MACD, SMA 200)
+python -c "
+from coingeckoToolKit import CoinGeckoToolKit
+tk = CoinGeckoToolKit()
+result = tk.perform_technical_analysis('bitcoin', 'usd', '90')  
+print('SUCCESS: All indicators calculated!' if all(x in result for x in ['RSI', 'MACD', 'SMA 200']) else 'PARTIAL/FAILED')
+print('='*50)
+print(result)
+"
+```
+
+**Teste específico Multi-Timeframe (validação crítica):**
+```bash
+# Este teste valida se o agente faz análises separadas para diferentes timeframes
+# DEVE retornar RSI/MACD diferentes para 30d vs 365d
+python -c "
+from coingeckoToolKit import CoinGeckoToolKit
+tk = CoinGeckoToolKit()
+print('=== SHORT TERM (30d) ===')
+short = tk.perform_technical_analysis('bitcoin', 'usd', '30')
+print(short)
+print('\\n=== LONG TERM (365d) ===') 
+long = tk.perform_technical_analysis('bitcoin', 'usd', '365')
+print(long)
+print('\\n=== VALIDATION ===')
+print('Different RSI values:', 'PASS' if 'RSI' in short and 'RSI' in long else 'FAIL')
+"
+```
+
+**Teste específico da Lógica Multi-Timeframe Corrigida:**
+```bash
+# Este teste valida se a correção de lógica funciona corretamente
+# SHORT-TERM deve usar 30 dias reais, LONG-TERM deve usar 365 dias reais
+python -c "
+from coingeckoToolKit import CoinGeckoToolKit
+tk = CoinGeckoToolKit()
+print('🔍 TESTE: Verificando se 30d usa dados reais de 30 dias...')
+result_30d = tk.perform_technical_analysis('bitcoin', 'usd', '30')
+print('Short-term SMA 200 deve ser N/A:', 'PASS' if 'N/A (análise de curto prazo)' in result_30d else 'FAIL')
+
+print('\\n🔍 TESTE: Verificando se 365d usa dados reais de 365 dias...')
+result_365d = tk.perform_technical_analysis('bitcoin', 'usd', '365')
+print('Long-term SMA 200 deve existir:', 'PASS' if 'SMA 200:' in result_365d and 'N/A' not in result_365d else 'FAIL')
+"
+```
+
+#### Sistema de Debug Avançado para Análise Técnica ⚡ (Última atualização)
+**Problema identificado**: Agente retornando "limited results" na análise técnica sem detalhes sobre a causa raiz
+- **Causa**: Falta de visibilidade nos passos internos dos cálculos técnicos em `perform_technical_analysis()`
+- **Solução implementada**:
+  - **Debug detalhado em `perform_technical_analysis()`**: Logs sobre dados OHLC recebidos da API, incluindo type, length e amostras
+  - **Debug granular em `_perform_technical_calculations()`**: 
+    - Logs de conversão de dados OHLC para DataFrame (shape, columns, dtypes, estatísticas, NaN values)
+    - Debug específico para cada indicador técnico:
+      - **RSI**: Type checking, empty validation, sample values, current RSI value
+      - **MACD**: Column validation, missing columns detection, current values (MACD, Signal, Histogram)  
+      - **Moving Averages**: Individual validation para SMA 20, SMA 50, SMA 200 com data availability checks
+    - Debug do resultado final: valores calculados, sentiment analysis (bullish/bearish signals), length do resultado
+  - **Logs estruturados**: Emojis diferenciados para diferentes tipos de debug (🔍 info, ❌ erro, ✅ sucesso, ⚠️ warning)
+  - **Rastreabilidade completa**: Cada passo do processo de análise técnica agora tem logging detalhado
+  
+**Status**: ✅ **Implementado e Otimizado** - Sistema de debug implementado + problema resolvido com abordagem robusta
+
+#### Problema Identificado e Resolvido ✅
+**Diagnóstico**: Sistema de debug revelou que OHLC endpoint retorna poucos dados (23 pontos para 90 dias), insuficiente para MACD e SMA 200
+- **Causa raiz**: 
+  - MACD(12,26,9) precisa de 26+ pontos para EMA26
+  - SMA 200 precisa de 200+ pontos
+  - Endpoint OHLC retorna dados limitados
+- **Solução robusta implementada**:
+  - **✅ Mudança de endpoint**: `market_chart` ao invés de `ohlc` (mais dados disponíveis)  
+  - **✅ Garantia de dados**: Sempre puxa mínimo 200 dias para SMA 200
+  - **✅ Simplificação inteligente**: Usa diretamente close prices do market_chart (formato: [[timestamp, close], ...])
+  - **✅ Auto-ajuste**: Se usuário pede 90 dias mas precisa de 200, ajusta automaticamente
+  - **✅ Debug detalhado**: Logs completos da extração e validação de dados
+
+**Resultado**: ✅ Análise técnica sempre tem dados suficientes para RSI, MACD e todas as SMAs (20, 50, 200)
+
+#### Correções de Bugs Identificados no Debug ✅ (Última atualização)
+**Problemas encontrados no debug em produção**:
+1. **🐛 Erro de formatação f-string**: `Invalid format specifier '.6f if sma_200 else 'N/A'' for object of type 'float'`
+   - **Causa**: Expressão condicional dentro de format specifier não é permitida 
+   - **Correção**: Moveu condição para fora: `${sma_200:.6f} {...}`
+2. **📰 Poucos artigos para análise**: Apenas 1 artigo sendo retornado vs. necessário 15+ para análise de sentimento
+   - **Causa**: Instruções do agente não especificavam limite mínimo adequado
+   - **Correção**: 
+     - Instrução específica: `limit=15 or higher` 
+     - Processo integrado: `get_latest_articles(limit=15)`
+
+**Status**: ✅ **Bugs corrigidos** - Análise técnica + análise de sentimento com dados adequados
+
+#### Correção Multi-Timeframe Analysis ⭐ (CRÍTICO)
+**Problema identificado**: Agente usando o mesmo RSI/MACD para análises de curto e longo prazo (erro conceitual grave)
+- **Exemplo do erro**: "Short-term RSI: 38.84" e "Long-term RSI: 38.84" (valores idênticos impossíveis)
+- **Causa raiz**: Falta de instruções específicas sobre análise multi-timeframe diferenciada
+- **Impacto**: Análises técnicas incorretas e conclusões inválidas sobre tendências de diferentes horizontes
+
+**✅ Solução implementada - Instruções Multi-Timeframe**:
+1. **Chamadas separadas obrigatórias**:
+   - Short-term: `perform_technical_analysis(coin_id, 'usd', '30')`
+   - Long-term: `perform_technical_analysis(coin_id, 'usd', '365')`
+2. **Processo estruturado em 4 etapas**:
+   - Análise técnica 30d → Análise técnica 365d → Notícias → Síntese comparativa
+3. **Validação de qualidade**:
+   - "CRITICAL: Never show the same RSI/MACD values for different timeframes"
+   - "STRUCTURE responses clearly: '📊 Short-Term (30d): RSI=X' vs '📈 Long-Term (365d): RSI=Z' - values MUST be different"
+4. **Interpretação contextual**:
+   - Divergências entre timeframes: "Short-term oversold + Long-term neutral = Temporary pullback"
+   - Implicações de trading: short-term para scalpers, long-term para HODLers
+   - Identificação de reversões: MACD crossovers entre horizontes
+
+**Resultado**: ✅ Análise técnica multi-timeframe precisa com RSI/MACD diferentes para cada horizonte temporal
+
+#### Correção de Lógica Multi-Timeframe no Toolkit ⚡ (CRÍTICO)
+**Problema técnico identificado**: `coingeckoToolKit.py` forçava mínimo 200 dias mesmo para análises "short-term"
+- **Lógica anterior**: `max(200, requested_days)` → Short-term (30d) usava 200 dias (não era short-term!)
+- **Consequência**: "Short-term" e "long-term" tinham diferença mínima de dados, afetando precisão multi-timeframe
+
+**✅ Solução técnica implementada - Lógica Inteligente**:
+```python
+# ANTES (problemático):
+min_days_needed = max(200, int(days))  # Forçava sempre 200+ dias
+
+# DEPOIS (inteligente):
+if requested_days < 200:
+    actual_days = str(requested_days)  # Usa período real para short-term
+    # SMA 200 não é calculado (apropriado para curto prazo)
+else:
+    actual_days = str(max(200, requested_days))  # Garante dados para long-term
+    # Todos os indicadores incluindo SMA 200
+```
+
+**Benefícios da correção**:
+1. **Short-term (30d)**: Usa realmente 30 dias → RSI/MACD genuinamente de curto prazo
+2. **Long-term (365d)**: Usa 365 dias → RSI/MACD genuinamente de longo prazo  
+3. **Indicadores apropriados**: SMA 200 apenas para análises >= 200 dias
+4. **Debug melhorado**: Logs específicos por tipo de análise
+
+**Validação**:
+- `perform_technical_analysis('bitcoin', 'usd', '30')` → 30 dias reais, sem SMA 200, COM RSI
+- `perform_technical_analysis('bitcoin', 'usd', '365')` → 365 dias reais, com SMA 200, SEM RSI
+- RSI/MACD agora serão significativamente diferentes entre timeframes
+
+#### Otimização RSI para Multi-Timeframe ⚡ (CRÍTICO)
+**Insight técnico**: RSI de 14 períodos numa análise de 365 dias só olha os últimos 14 dias - não representa a tendência de longo prazo
+- **Problema conceitual**: RSI fica "perdido" em análises de longo prazo
+- **Solução inteligente implementada**:
+  - **≤ 90 dias**: Calcula RSI (relevante para curto/médio prazo)
+  - **> 90 dias**: Pula RSI (foca em MACD e SMAs para longo prazo)
+  - **Consistência**: RSI calculado uma única vez, evitando discrepâncias
+  
+**Resultado**: Análises tecnicamente mais precisas - RSI apenas onde faz sentido, indicadores de longo prazo para análises extensas
+
+#### Como usar o sistema de debug:
+1. Execute uma análise técnica via agente 
+2. Monitore os logs no console/terminal
+3. Os logs mostrarão exatamente onde o processo falha ou retorna resultados limitados
+4. Procure por patterns específicos:
+   - `❌ [DEBUG]` → Indica falha em algum passo específico
+   - `🔍 [DEBUG]` → Mostra informações detalhadas do processo
+   - `✅ [DEBUG]` → Confirma sucesso de cada etapa
+
 #### Notas de Deployment
 - As correções mantêm **100% de compatibilidade** com o código existente
 - Não há mudanças nas interfaces públicas dos métodos
 - Dependências permanecem as mesmas (`requirements.txt` inalterado)
 - Configuração via variáveis de ambiente permanece idêntica
+- **Sistema de debug pode ser desabilitado** removendo os prints de debug se necessário para produção

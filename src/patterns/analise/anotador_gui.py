@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import requests
 import mplfinance as mpf
 import pandas_ta as ta
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import os
 import time
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class Config:
@@ -85,6 +87,138 @@ class Config:
     RETRY_DELAY_SEGUNDOS = 5
     ZIGZAG_LOOKBACK_DAYS_DEFAULT = 400  # Generous lookback for zoom calculations
     ZIGZAG_LOOKBACK_DAYS_MINUTE = 5     # Extra context for minute intervals
+
+    # CoinGecko Pro configuration
+    COINGECKO_API_BASE = 'https://pro-api.coingecko.com/api/v3'
+    COINGECKO_API_KEY_ENV = 'COINGECKO_API_KEY'
+    VS_CURRENCY_DEFAULT = 'usd'
+
+    # Mapping from project tickers to CoinGecko coin IDs
+    COINGECKO_IDS: Dict[str, str] = {
+        'AAVE-USD': 'aave',
+        'ADA-USD': 'cardano',
+        'ALGO-USD': 'algorand',
+        'AVAX-USD': 'avalanche-2',
+        'BCH-USD': 'bitcoin-cash',
+        'BNB-USD': 'binancecoin',
+        'BTC-USD': 'bitcoin',
+        'CHZ-USD': 'chiliz',
+        'CRO-USD': 'crypto-com-chain',
+        'DOGE-USD': 'dogecoin',
+        'DOT-USD': 'polkadot',
+        'EGLD-USD': 'elrond-erd-2',
+        'EOS-USD': 'eos',
+        'ETC-USD': 'ethereum-classic',
+        'ETH-USD': 'ethereum',
+        'FIL-USD': 'filecoin',
+        'FLOW-USD': 'flow',
+        'HBAR-USD': 'hedera-hashgraph',
+        'ICP-USD': 'internet-computer',
+        'LDO-USD': 'lido-dao',
+        'LINK-USD': 'chainlink',
+        'LTC-USD': 'litecoin',
+        'MANA-USD': 'decentraland',
+        'MKR-USD': 'maker',
+        'NEAR-USD': 'near',
+        'NEO-USD': 'neo',
+        'OP-USD': 'optimism',
+        'QNT-USD': 'quant-network',
+        'SHIB-USD': 'shiba-inu',
+        'SOL-USD': 'solana',
+        'THETA-USD': 'theta-token',
+        'TRX-USD': 'tron',
+        'VET-USD': 'vechain',
+        'XLM-USD': 'stellar',
+        'XMR-USD': 'monero',
+        'XRP-USD': 'ripple',
+        'XTZ-USD': 'tezos',
+        'ZIL-USD': 'zilliqa',
+    }
+
+
+def _map_ticker_to_coingecko(ticker: str) -> (str, str):
+    """Map 'BTC-USD' to ('bitcoin', 'usd')."""
+    if '-' in ticker:
+        symbol, vs_cur = ticker.split('-', 1)
+        vs_cur = vs_cur.lower() if vs_cur else Config.VS_CURRENCY_DEFAULT
+    else:
+        symbol, vs_cur = ticker, Config.VS_CURRENCY_DEFAULT
+    cg_id = Config.COINGECKO_IDS.get(ticker)
+    if not cg_id:
+        cg_id = symbol.lower()
+    return cg_id, vs_cur
+
+
+def _interval_to_pandas_freq(interval: str) -> str:
+    """Map interval string to pandas resample frequency."""
+    mapping = {
+        '1m': '1T', '3m': '3T', '5m': '5T', '15m': '15T', '30m': '30T',
+        '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
+        '1d': '1D', '3d': '3D', '1wk': '1W', '1mo': '1M'
+    }
+    return mapping.get(interval, '1D')
+
+
+def _coingecko_request(endpoint_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """GET request to CoinGecko Pro using API key from env."""
+    api_key = os.getenv(Config.COINGECKO_API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError(
+            f"Missing {Config.COINGECKO_API_KEY_ENV} environment variable for CoinGecko Pro API.")
+    url = f"{Config.COINGECKO_API_BASE}/{endpoint_path}"
+    headers = {
+        'x-cg-pro-api-key': api_key,
+        'Accept': 'application/json',
+        'User-Agent': 'pattern-gui/1.0'
+    }
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    if resp.status_code != 200:
+        raise ConnectionError(
+            f"CoinGecko request failed {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+def _fetch_market_chart_range(coin_id: str, vs_currency: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> (pd.DataFrame, pd.DataFrame):
+    """Fetch prices and total_volumes using market_chart/range for precise window."""
+    start_dt = pd.to_datetime(start_dt).tz_localize(
+        'UTC') if start_dt.tzinfo is None else start_dt.tz_convert('UTC')
+    end_dt = pd.to_datetime(end_dt).tz_localize(
+        'UTC') if end_dt.tzinfo is None else end_dt.tz_convert('UTC')
+    params: Dict[str, Any] = {
+        'vs_currency': vs_currency,
+        'from': int(start_dt.timestamp()),
+        'to': int(end_dt.timestamp()),
+    }
+    data = _coingecko_request(f"coins/{coin_id}/market_chart/range", params)
+    prices = data.get('prices', []) or []
+    vols = data.get('total_volumes', []) or []
+    prices_df = pd.DataFrame(prices, columns=['timestamp', 'price'])
+    vols_df = pd.DataFrame(vols, columns=['timestamp', 'volume'])
+    if not prices_df.empty:
+        prices_df['timestamp'] = pd.to_datetime(
+            prices_df['timestamp'], unit='ms', utc=True).dt.tz_convert(None)
+        prices_df.set_index('timestamp', inplace=True)
+        prices_df = prices_df.astype(float)
+    if not vols_df.empty:
+        vols_df['timestamp'] = pd.to_datetime(
+            vols_df['timestamp'], unit='ms', utc=True).dt.tz_convert(None)
+        vols_df.set_index('timestamp', inplace=True)
+        vols_df = vols_df.astype(float)
+    return prices_df, vols_df
+
+
+def _build_ohlcv_from_market_chart(prices_df: pd.DataFrame, vols_df: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """Build OHLCV via resampling of price and summing volume for target interval."""
+    if prices_df is None or prices_df.empty:
+        return pd.DataFrame()
+    freq = _interval_to_pandas_freq(interval)
+    ohlc = prices_df['price'].resample(freq).ohlc()
+    volume_series = pd.Series(dtype=float)
+    if vols_df is not None and not vols_df.empty:
+        volume_series = vols_df['volume'].resample(freq).sum()
+    df = pd.concat([ohlc, volume_series.rename('volume')], axis=1)
+    df.dropna(subset=['open', 'high', 'low', 'close'], inplace=True)
+    return df
 
 
 class LabelingTool(tk.Tk):
@@ -216,26 +350,27 @@ class LabelingTool(tk.Tk):
         download_end_date = data_fim_padrao + interval_delta
 
         df_full = None
+        coin_id, vs_cur = _map_ticker_to_coingecko(ticker)
         for _ in range(Config.MAX_DOWNLOAD_TENTATIVAS):
-            # yfinance download with retries
             try:
-                df_full = yf.download(
-                    tickers=ticker, start=download_start_date, end=download_end_date,
-                    interval=intervalo, auto_adjust=True, progress=False
-                )
+                prices_df, vols_df = _fetch_market_chart_range(
+                    coin_id, vs_cur, download_start_date, download_end_date)
+                df_full = _build_ohlcv_from_market_chart(
+                    prices_df, vols_df, intervalo)
                 if not df_full.empty:
-                    df_full.columns = [col.lower() for col in (df_full.columns.get_level_values(
-                        0) if isinstance(df_full.columns, pd.MultiIndex) else df_full.columns)]
                     break
                 else:
-                    raise ValueError("Download retornou um DataFrame vazio.")
+                    raise ValueError("CoinGecko returned empty OHLCV data.")
             except Exception:
                 time.sleep(Config.RETRY_DELAY_SEGUNDOS)
         else:
             self.marcar_e_avancar(-1)
             return
 
-        df_full.index = df_full.index.tz_localize(None)
+        try:
+            df_full.index = df_full.index.tz_localize(None)
+        except Exception:
+            pass
 
         # build zoom window by candle density
         try:

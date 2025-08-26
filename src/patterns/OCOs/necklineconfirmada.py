@@ -1,13 +1,13 @@
-"""Technical pattern dataset generator (H&S/Inverse H&S and DT/DB).
+"""Technical pattern dataset generator (H&S/Inverse H&S, DT/DB, TT/TB).
 
-Pipeline: download OHLCV (yfinance) → compute ZigZag pivots → validate/score
+Pipeline: download OHLCV (CoinGecko Pro) → compute ZigZag pivots → validate/score
 patterns with deterministic rules → save final CSV for labeling/modeling.
 
 Run as a script to filter by tickers/strategies/intervals.
 """
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import requests
 import pandas_ta as ta
 from typing import List, Dict, Any, Optional, Tuple
 import os
@@ -16,6 +16,9 @@ import re
 from colorama import Fore, Style, init
 import argparse
 import logging  # Fix: implementar logging padrão
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+load_dotenv()
 
 # Initialize Colorama
 init(autoreset=True)
@@ -66,6 +69,53 @@ class Config:
         'ZIL-USD',   # Zilliqa
     ]
     DATA_PERIOD = '5y'
+
+    # --- Data source: CoinGecko Pro ---
+    COINGECKO_API_BASE = 'https://pro-api.coingecko.com/api/v3'
+    COINGECKO_API_KEY_ENV = 'COINGECKO_API_KEY'
+    VS_CURRENCY_DEFAULT = 'usd'
+
+    # Map project tickers (e.g., BTC-USD) to CoinGecko coin IDs
+    COINGECKO_IDS: Dict[str, str] = {
+        'AAVE-USD': 'aave',
+        'ADA-USD': 'cardano',
+        'ALGO-USD': 'algorand',
+        'AVAX-USD': 'avalanche-2',
+        'BCH-USD': 'bitcoin-cash',
+        'BNB-USD': 'binancecoin',
+        'BTC-USD': 'bitcoin',
+        'CHZ-USD': 'chiliz',
+        'CRO-USD': 'crypto-com-chain',  # Cronos legacy id
+        'DOGE-USD': 'dogecoin',
+        'DOT-USD': 'polkadot',
+        'EGLD-USD': 'elrond-erd-2',
+        'EOS-USD': 'eos',
+        'ETC-USD': 'ethereum-classic',
+        'ETH-USD': 'ethereum',
+        'FIL-USD': 'filecoin',
+        'FLOW-USD': 'flow',
+        'HBAR-USD': 'hedera-hashgraph',
+        'ICP-USD': 'internet-computer',
+        'LDO-USD': 'lido-dao',
+        'LINK-USD': 'chainlink',
+        'LTC-USD': 'litecoin',
+        'MANA-USD': 'decentraland',
+        'MKR-USD': 'maker',
+        'NEAR-USD': 'near',
+        'NEO-USD': 'neo',
+        'OP-USD': 'optimism',
+        'QNT-USD': 'quant-network',
+        'SHIB-USD': 'shiba-inu',
+        'SOL-USD': 'solana',
+        'THETA-USD': 'theta-token',
+        'TRX-USD': 'tron',
+        'VET-USD': 'vechain',
+        'XLM-USD': 'stellar',
+        'XMR-USD': 'monero',
+        'XRP-USD': 'ripple',
+        'XTZ-USD': 'tezos',
+        'ZIL-USD': 'zilliqa',
+    }
 
     ZIGZAG_STRATEGIES = {
         # ------- SCALPING (micro-structures) ----------
@@ -386,13 +436,138 @@ def calcular_indicadores(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    """Download OHLCV from Yahoo Finance respecting interval limits.
+def _map_ticker_to_coingecko(ticker: str) -> Tuple[str, str]:
+    """Map a project ticker like 'BTC-USD' to (coingecko_id, vs_currency).
 
-    Automatically adjusts ``period`` for intraday intervals and normalizes
-    columns to lowercase.
+    Falls back to a simple heuristic if the ticker is missing from the
+    mapping: uses the symbol part lowercased as id and the suffix as
+    vs_currency.
+    """
+    if '-' in ticker:
+        symbol, vs_cur = ticker.split('-', 1)
+        vs_cur = vs_cur.lower() if vs_cur else Config.VS_CURRENCY_DEFAULT
+    else:
+        symbol, vs_cur = ticker, Config.VS_CURRENCY_DEFAULT
+
+    cg_id = Config.COINGECKO_IDS.get(ticker)
+    if not cg_id:
+        cg_id = symbol.lower()
+    return cg_id, vs_cur
+
+
+def _period_to_days(period: Optional[str]) -> str:
+    """Convert a yfinance-like period string to days for CoinGecko market_chart.
+
+    Returns either an integer-like string or 'max'. Defaults to Config.DATA_PERIOD.
+    """
+    if not period:
+        period = Config.DATA_PERIOD
+    p = period.lower()
+    if p == 'max':
+        return 'max'
+    try:
+        if p.endswith('d'):
+            return str(int(p[:-1]))
+        if p.endswith('w'):
+            return str(int(p[:-1]) * 7)
+        if p.endswith('mo'):
+            return str(int(p[:-2]) * 30)
+        if p.endswith('y'):
+            return str(int(p[:-1]) * 365)
+    except Exception:
+        pass
+    # Fallback ~5 years
+    return '1825'
+
+
+def _interval_to_pandas_freq(interval: str) -> str:
+    """Map interval string to pandas resample frequency."""
+    mapping = {
+        '1m': '1T', '3m': '3T', '5m': '5T', '15m': '15T', '30m': '30T',
+        '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
+        '1d': '1D', '3d': '3D', '1wk': '1W', '1mo': '1M'
+    }
+    return mapping.get(interval, '1D')
+
+
+def _coingecko_request(endpoint_path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """HTTP GET to CoinGecko Pro with API key from env."""
+    if params is None:
+        params = {}
+    api_key = os.getenv(Config.COINGECKO_API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError(
+            f"Missing {Config.COINGECKO_API_KEY_ENV} environment variable for CoinGecko Pro API.")
+    url = f"{Config.COINGECKO_API_BASE}/{endpoint_path}"
+    headers = {
+        'x-cg-pro-api-key': api_key,
+        'Accept': 'application/json',
+        'User-Agent': 'pattern-engine/1.0'
+    }
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    if resp.status_code != 200:
+        raise ConnectionError(
+            f"CoinGecko request failed {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+def _fetch_market_chart(coin_id: str, vs_currency: str, days: str, interval_hint: Optional[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch prices and total_volumes using market_chart and return (prices_df, volumes_df).
+
+    Data format from API: arrays [[timestamp_ms, value], ...].
+    """
+    params: Dict[str, Any] = {'vs_currency': vs_currency, 'days': days}
+    # Provide interval hint only when beneficial (daily for large spans)
+    if days not in ('1', '7', '14', '30'):
+        params['interval'] = 'daily'
+    data = _coingecko_request(f"coins/{coin_id}/market_chart", params)
+
+    prices = data.get('prices', []) or []
+    vols = data.get('total_volumes', []) or []
+
+    prices_df = pd.DataFrame(prices, columns=['timestamp', 'price'])
+    vols_df = pd.DataFrame(vols, columns=['timestamp', 'volume'])
+
+    if not prices_df.empty:
+        prices_df['timestamp'] = pd.to_datetime(
+            prices_df['timestamp'], unit='ms', utc=True).dt.tz_convert(None)
+        prices_df.set_index('timestamp', inplace=True)
+        prices_df = prices_df.astype(float)
+    if not vols_df.empty:
+        vols_df['timestamp'] = pd.to_datetime(
+            vols_df['timestamp'], unit='ms', utc=True).dt.tz_convert(None)
+        vols_df.set_index('timestamp', inplace=True)
+        vols_df = vols_df.astype(float)
+    return prices_df, vols_df
+
+
+def _build_ohlcv_from_market_chart(prices_df: pd.DataFrame, vols_df: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """Build OHLCV by resampling market_chart prices and volumes to the target interval."""
+    if prices_df is None or prices_df.empty:
+        return pd.DataFrame()
+    freq = _interval_to_pandas_freq(interval)
+
+    # Price OHLC from sampled prices (approximate OHLC at this granularity)
+    ohlc = prices_df['price'].resample(freq).ohlc()
+    # Align volumes; sum across window
+    volume_series = pd.Series(dtype=float)
+    if vols_df is not None and not vols_df.empty:
+        volume_series = vols_df['volume'].resample(freq).sum()
+
+    df = pd.concat([ohlc, volume_series.rename('volume')], axis=1)
+    df.dropna(subset=['open', 'high', 'low', 'close'], inplace=True)
+    # Normalize column names to lowercase (already)
+    return df
+
+
+def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    """Download OHLCV from CoinGecko Pro and normalize columns to lowercase.
+
+    - Intraday intervals adjust the time span for higher granularity.
+    - OHLC is approximated from market_chart prices; volume from total_volumes.
     """
     original_period = period
+    # Adjust effective lookback similar to former yfinance behavior
     if 'mo' in interval:
         period = 'max'
     elif 'm' in interval:
@@ -401,42 +576,44 @@ def buscar_dados(ticker: str, period: str, interval: str) -> pd.DataFrame:
         period = '2y'
 
     if period != original_period:
-        # Fix: substituir print por logging
         logging.warning(
             "Notice: period '%s' adjusted to '%s' for interval '%s' to respect API limits.",
             original_period, period, interval,
         )
 
+    coin_id, vs_currency = _map_ticker_to_coingecko(ticker)
+    days = _period_to_days(period)
+
+    last_err: Optional[Exception] = None
     for tentativa in range(Config.MAX_DOWNLOAD_TENTATIVAS):
         try:
-            df = yf.download(tickers=ticker, period=period,
-                             interval=interval, auto_adjust=True, progress=False)
-            if not df.empty:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.get_level_values(0)
-                df.columns = [col.lower() for col in df.columns]
-                # Ensure timezone-naive index to avoid mixing tz-aware/naive later
-                try:
-                    df.index = df.index.tz_localize(None)
-                except Exception:
-                    pass
-                return df
-            else:
-                raise ValueError("Download returned an empty DataFrame.")
+            prices_df, vols_df = _fetch_market_chart(
+                coin_id, vs_currency, days, interval)
+            df = _build_ohlcv_from_market_chart(prices_df, vols_df, interval)
+            if df is None or df.empty:
+                raise ValueError(
+                    "CoinGecko returned empty data for prices/volumes")
+            # Ensure standard columns and tz-naive index
+            try:
+                df.index = df.index.tz_localize(None)
+            except Exception:
+                pass
+            return df
         except Exception as e:
+            last_err = e
             if tentativa < Config.MAX_DOWNLOAD_TENTATIVAS - 1:
-                # Fix: substituir print por logging
                 logging.warning(
-                    "Attempt %d failed. Retrying in %ds...",
-                    tentativa + 1, Config.RETRY_DELAY_SEGUNDOS,
+                    "Attempt %d failed for %s/%s. Retrying in %ds... (%s)",
+                    tentativa +
+                    1, ticker, interval, Config.RETRY_DELAY_SEGUNDOS, str(e)[
+                        :180],
                 )
                 time.sleep(Config.RETRY_DELAY_SEGUNDOS)
             else:
-                raise ConnectionError(
-                    f"Download failed for {ticker}/{interval} after {Config.MAX_DOWNLOAD_TENTATIVAS} attempts. Error: {e}")
+                break
 
     raise ConnectionError(
-        f"Unexpected download failure for {ticker}/{interval}.")
+        f"Download failed for {ticker}/{interval} after {Config.MAX_DOWNLOAD_TENTATIVAS} attempts. Error: {last_err}")
 
 
 def calcular_zigzag_oficial(df: pd.DataFrame, depth: int, deviation_percent: float) -> List[Dict[str, Any]]:
