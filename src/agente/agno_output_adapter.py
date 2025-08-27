@@ -44,8 +44,8 @@ class AgnoOutputAdapter:
         }
 
         try:
-            # Extrair RSI
-            rsi_match = re.search(r'RSI.*?(\d+\.?\d*)',
+            # Extrair RSI - regex para formato "**RSI (14)**: 41.15"
+            rsi_match = re.search(r'RSI\s*\([0-9]+\)\*\*:\s*([0-9]+\.?[0-9]*)', 
                                   technical_response, re.IGNORECASE)
             if rsi_match:
                 rsi_value = float(rsi_match.group(1))
@@ -77,17 +77,19 @@ class AgnoOutputAdapter:
                 else:
                     indicators["macd_trend"] = "bearish_crossover"
 
-            # Extrair SMAs
+            # Extrair SMAs - corrigido para lidar com formatação monetária ($ e vírgulas)
             sma_patterns = [
-                (r'SMA\s*20.*?(\d+\.?\d*)', "sma_20"),
-                (r'SMA\s*50.*?(\d+\.?\d*)', "sma_50"),
-                (r'SMA\s*200.*?(\d+\.?\d*)', "sma_200")
+                (r'SMA\s*20.*?\$?([0-9,]+\.?\d*)', "sma_20"),
+                (r'SMA\s*50.*?\$?([0-9,]+\.?\d*)', "sma_50"),
+                (r'SMA\s*200.*?\$?([0-9,]+\.?\d*)', "sma_200")
             ]
 
             for pattern, key in sma_patterns:
                 match = re.search(pattern, technical_response, re.IGNORECASE)
                 if match:
-                    indicators[key] = float(match.group(1))
+                    # Remover vírgulas da formatação antes de converter para float
+                    value_str = match.group(1).replace(',', '')
+                    indicators[key] = float(value_str)
 
             # Detectar Golden Cross / Death Cross
             if "golden cross" in technical_response.lower():
@@ -145,36 +147,40 @@ class AgnoOutputAdapter:
                 market_data["price_change_percentage_24h"] = float(
                     percentage_match.group(1))
 
-            # Extrair market cap
+            # Extrair market cap - corrigido para capturar com vírgulas e incluir T (trilhões)
             mcap_match = re.search(
-                r'market cap.*?\$(\d+\.?\d*[BMK]?)', market_response, re.IGNORECASE)
+                r'market cap.*?\$([0-9,]+\.?\d*[BTMK]?)', market_response, re.IGNORECASE)
             if mcap_match:
                 mcap_str = mcap_match.group(1)
                 multiplier = 1
-                if mcap_str.endswith('B'):
+                if mcap_str.upper().endswith('T'):
+                    multiplier = 1e12
+                elif mcap_str.upper().endswith('B'):
                     multiplier = 1e9
-                elif mcap_str.endswith('M'):
+                elif mcap_str.upper().endswith('M'):
                     multiplier = 1e6
-                elif mcap_str.endswith('K'):
+                elif mcap_str.upper().endswith('K'):
                     multiplier = 1e3
 
-                mcap_value = float(mcap_str.rstrip('BMK'))
+                mcap_value = float(mcap_str.rstrip('BTMKbtmk').replace(',', ''))
                 market_data["market_cap"] = mcap_value * multiplier
 
-            # Extrair volume
+            # Extrair volume - corrigido para capturar com vírgulas e incluir T (trilhões)  
             volume_match = re.search(
-                r'volume.*?\$(\d+\.?\d*[BMK]?)', market_response, re.IGNORECASE)
+                r'volume.*?\$([0-9,]+\.?\d*[BTMK]?)', market_response, re.IGNORECASE)
             if volume_match:
                 volume_str = volume_match.group(1)
                 multiplier = 1
-                if volume_str.endswith('B'):
+                if volume_str.upper().endswith('T'):
+                    multiplier = 1e12
+                elif volume_str.upper().endswith('B'):
                     multiplier = 1e9
-                elif volume_str.endswith('M'):
+                elif volume_str.upper().endswith('M'):
                     multiplier = 1e6
-                elif volume_str.endswith('K'):
+                elif volume_str.upper().endswith('K'):
                     multiplier = 1e3
 
-                volume_value = float(volume_str.rstrip('BMK'))
+                volume_value = float(volume_str.rstrip('BTMKbtmk').replace(',', ''))
                 market_data["volume_24h"] = volume_value * multiplier
 
             # Extrair ranking

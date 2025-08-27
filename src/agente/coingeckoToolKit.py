@@ -810,16 +810,16 @@ class CoinGeckoToolKit(Toolkit):
             requested_days = int(days) if days.isdigit() else 90
 
             if requested_days < 200:
-                # For short-term analysis: ensure minimum bars for MACD (>=35), SMA 200 will be unavailable
-                min_macd_days = 35
-                actual_days_int = max(requested_days, min_macd_days)
+                # For short-term analysis: ensure minimum bars for MACD (>=35) and SMA 50 (>=50), SMA 200 will be unavailable
+                min_required_days = 50  # Increased from 35 to ensure SMA 50 can be calculated
+                actual_days_int = max(requested_days, min_required_days)
                 actual_days = str(actual_days_int)
                 if actual_days_int == requested_days:
                     print(
                         f"🔍 [DEBUG] Using {actual_days} days for short-term analysis (SMA 200 may not be available)")
                 else:
                     print(
-                        f"🔍 [DEBUG] Adjusting days from {requested_days} to {actual_days} to satisfy MACD minimum (35) for short-term analysis")
+                        f"🔍 [DEBUG] Adjusting days from {requested_days} to {actual_days} to satisfy SMA 50 minimum (50) for short-term analysis")
             else:
                 # For long-term analysis: ensure minimum 200 days for all indicators
                 actual_days = str(max(200, requested_days))

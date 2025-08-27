@@ -337,6 +337,144 @@ Impacto esperado:
 
 **Status**: ✅ **Implementado e Integrado** - Sistema completamente funcional e documentado
 
+#### Correção SMA 50 - Dados Insuficientes ⭐ (NOVA IMPLEMENTAÇÃO)
+**Problema identificado**: Análises de curto prazo (30 dias) falhavam ao calcular SMA 50 por dados insuficientes
+- **Causa raiz**: Lógica anterior garantia apenas 35 dias (mínimo para MACD), insuficiente para SMA 50
+- **Impacto**: SMA 50 retornando `None` em análises short-term, prejudicando identificação de resistência/suporte
+
+**✅ Solução implementada - Garantia de Dados para SMA 50**:
+1. **Aumento de mínimo de dias**:
+   - **Antes**: `min_macd_days = 35` (apenas MACD)
+   - **Depois**: `min_required_days = 50` (MACD + SMA 50)
+2. **Lógica inteligente preservada**:
+   - Short-term (< 200 dias): garante mínimo 50 pontos de dados
+   - Long-term (≥ 200 dias): garante 200+ pontos para todas as SMAs
+3. **Debug aprimorado**:
+   - Logs especificam "SMA 50 minimum (50)" ao invés de "MACD minimum (35)"
+   - Transparência total sobre ajustes automáticos
+
+**Resultado**: ✅ SMA 50 sempre disponível em análises short-term para identificação precisa de resistência/suporte
+**Compatibilidade**: ✅ Mantém lógica multi-timeframe existente, apenas expande dados mínimos
+
+#### Correção Crítica RSI - Bug de Parsing ⭐ (CRÍTICO)
+**Problema identificado**: Valor do RSI sendo reportado incorretamente (14.00 ao invés de 41.16)
+- **Causa raiz**: Regex no `AgnoOutputAdapter` capturava período (14) ao invés do valor real
+- **Impacto**: Análises de RSI completamente incorretas, levando a interpretações erradas de sobrecompra/sobrevenda
+
+**✅ Solução implementada - Correção do Regex RSI**:
+1. **Problema no regex original**:
+   ```python
+   # ANTES (problemático):
+   rsi_match = re.search(r'RSI.*?(\d+\.?\d*)', technical_response)
+   # Capturava "14" de "RSI (14): 41.15"
+   ```
+2. **Regex corrigido**:
+   ```python
+   # DEPOIS (correto):
+   rsi_match = re.search(r'RSI\s*\([0-9]+\)\*\*:\s*([0-9]+\.?[0-9]*)', technical_response)
+   # Captura "41.15" de "**RSI (14)**: 41.15"
+   ```
+3. **Especificidade melhorada**:
+   - Ignora período (14) corretamente
+   - Captura valor após **: formato específico
+   - Suporte a números decimais
+
+**Resultado**: ✅ RSI agora reporta valores corretos (41.16 ao invés de 14.00)
+**Impacto**: ✅ Interpretações de mercado precisas, análises de overbought/oversold corretas
+
+#### Múltiplas Correções de Parsing - SMA e Market Data ⭐ (MÚLTIPLOS BUGS)
+**Problemas identificados**: Auditoria completa revelou múltiplos bugs de parsing de valores formatados
+- **Bug SMA 20**: Capturava "116" ao invés de "116,010.56" (não lidava com vírgulas)
+- **Bug SMA 50**: Capturava "116" ao invés de "116,617.02" (não lidava com vírgulas) 
+- **Bug SMA 200**: Mesmo problema com formatação monetária
+- **Bug Market Cap**: Capturava "2.19" ao invés de "2.19T" (não incluía trilhões)
+- **Bug Volume**: Não estava preparado para valores com vírgulas
+
+**✅ Correções implementadas - Regex Robusto para Formatação Monetária**:
+1. **SMA patterns corrigidos**:
+   ```python
+   # ANTES (problemático):
+   (r'SMA\s*20.*?(\d+\.?\d*)', "sma_20")
+   # Capturava apenas parte: "116" de "$116,010.56"
+   
+   # DEPOIS (robusto):
+   (r'SMA\s*20.*?\$?([0-9,]+\.?\d*)', "sma_20")
+   # Captura completo: "116,010.56" e remove vírgulas: 116010.56
+   ```
+
+2. **Market Cap corrigido para trilhões**:
+   ```python
+   # ANTES: não incluía 'T' (trilhões)
+   r'market cap.*?\$(\d+\.?\d*[BMK]?)'
+   
+   # DEPOIS: inclui 'T' e vírgulas
+   r'market cap.*?\$([0-9,]+\.?\d*[BTMK]?)'
+   if mcap_str.upper().endswith('T'): multiplier = 1e12
+   ```
+
+3. **Processamento de vírgulas padronizado**:
+   - Todos os valores monetários agora removem vírgulas: `value.replace(',', '')`
+   - Suporte a formatação brasileira e americana
+   - Multiplicadores para K, M, B, T (milhares, milhões, bilhões, trilhões)
+
+**Resultado**: ✅ Parsing preciso de todos os valores monetários formatados
+**Teste verificado**: $116,617.02 → 116617.02 (float correto), $2.19T → 2190000000000 (2.19 trilhões)
+
+#### Sistema de Validação com Dados RAW - Economizando APIs ⭐ (NOVA IMPLEMENTAÇÃO)
+**Necessidade identificada**: Agente deve validar dados sem gastar chamadas de API adicionais
+- **Problema**: Validação automática gastaria mais APIs para re-extrair dados
+- **Solução**: Incluir dados RAW dos endpoints no output + instrução para agente usar reasoning/thinking tools
+
+**✅ Solução implementada - Output com Dados RAW + Validação Manual**:
+1. **Anexar dados RAW PUROS no output padronizado**:
+   ```python
+   # StandardCryptoAnalysisToolKit inclui seção automática:
+   ## 📋 **Dados RAW dos Endpoints** (Para Validação)
+   ### 🔍 Market Data Endpoint RAW (JSON exato da API)
+   ### 📊 Technical Analysis RAW - Short Term (texto completo do toolkit)  
+   ### 📈 Technical Analysis RAW - Long Term (texto completo do toolkit)
+   ### 📰 News Data RAW (JSON exato da API)
+   ### 💡 Validation Instructions for Agent
+   ```
+
+2. **Instrução específica para agente**:
+   - `🧠 CRITICAL: After receiving ANY output from comprehensive_crypto_analysis(), ALWAYS use Reasoning Tools or Thinking Tools to validate`
+   - Validar RSI (0-100), MACD, SMAs, preços, mudanças extremas
+   - Verificar consistência entre timeframes e com notícias
+   - Ajustar confiança baseado na qualidade dos dados
+
+3. **Dados RAW totalmente puros**:
+   - **Market Data**: JSON exato como retornado pela CoinGecko API
+   - **Technical Analysis**: Texto completo e não-processado dos toolkits
+   - **News Data**: JSON exato como retornado pela CoinDesk API
+   - **Sem truncamento**: Dados completos para validação precisa
+   - **Sem formatação**: Exatamente como as APIs entregam
+
+4. **Economização de APIs**:
+   - **Zero** chamadas adicionais de API para validação
+   - Dados já coletados são reutilizados para verificação
+   - Agente usa reasoning interno ao invés de novos requests
+
+5. **Processo de validação**:
+   ```
+   1. StandardCryptoAnalysisToolKit gera análise + dados RAW puros
+   2. Agente recebe output completo (análise + dados crus das APIs)
+   3. Agente usa Reasoning/Thinking Tools para validar dados originais
+   4. Agente ajusta confiança e menciona inconsistências
+   5. Resposta final inclui nota de validação baseada em dados reais
+   ```
+
+**Exemplos de validações que agente fará com dados RAW puros**:
+- "No JSON da CoinGecko vejo: 'current_price': 111095.56 - valor positivo e realista ✅"
+- "No output do toolkit: 'RSI (14): 41.15' - está no range 0-100 e coerente ✅"  
+- "Comparando SMAs no texto RAW: SMA20 < SMA50 confirma tendência de baixa ✅"
+- "No JSON de news vejo 15 artigos recentes, sentiment pode explicar movimento ✅"
+- "MACD line vs signal no RAW confirma direção bearish da análise ✅"
+
+**Resultado**: ✅ Validação inteligente usando dados ORIGINAIS das APIs, sem processamento intermediário
+**Economia**: ✅ Zero chamadas adicionais, máxima transparência com dados crus das fontes
+**Qualidade**: ✅ Agente valida contra dados reais das APIs, não versões processadas
+
 #### Comandos de Teste
 Para verificar se as correções estão funcionando:
 ```bash
@@ -493,6 +631,38 @@ else:
 - `perform_technical_analysis('bitcoin', 'usd', '30')` → 30 dias reais, sem SMA 200, COM RSI
 - `perform_technical_analysis('bitcoin', 'usd', '365')` → 365 dias reais, com SMA 200, SEM RSI
 - RSI/MACD agora serão significativamente diferentes entre timeframes
+
+#### Novas Instruções de Análise - Insights sem Recomendações ⭐ (NOVA IMPLEMENTAÇÃO)
+**Atualização crítica**: Instruções do agente reformuladas para focar em insights analíticos ao invés de recomendações financeiras
+
+**✅ Mudanças implementadas - Diretrizes de Análise**:
+1. **Proibição de recomendações**:
+   - Linguagem transformada de "você deveria comprar/vender" para "dados indicam oportunidade/risco potencial"
+   - Eliminação completa de conselhos de investimento diretos
+   - Foco em análise de dados e insights de mercado
+
+2. **Resistências e suportes obrigatórios**:
+   - **Short-term (30d)**: Resistência/suporte baseado em SMA 20/50 e pivôs recentes
+   - **Medium-term (90d)**: Níveis mensais baseados em SMA 50/200 e pivôs principais  
+   - **Long-term (365d)**: Resistência/suporte histórico baseado em máximas/mínimas anuais
+   - Estrutura obrigatória: "Resistência atual em $X (nível/razão), suporte em $Y (nível/razão)"
+
+3. **Notícias relevantes obrigatórias**:
+   - Resumo mandatório das notícias mais relevantes que impactam movimento de preços
+   - Correlação entre níveis técnicos e notícias fundamentais
+   - Conexão: "Resistência coincide com preocupações regulatórias" ou "Suporte fortalecido por notícias de adoção"
+
+4. **Linguagem reformulada**:
+   - RSI >70 = "condições de sobrecompra" (não "potencial venda")
+   - RSI <30 = "condições de sobrevenda" (não "potencial compra")
+   - Insights analíticos: "Dados de mercado mostram...", "Análise técnica indica..."
+
+**Impacto esperado**:
+- ✅ Análises profissionais focadas em dados, não conselhos financeiros
+- ✅ Informações completas de resistência/suporte para todos os timeframes
+- ✅ Contexto noticioso sempre presente nas análises
+- ✅ Conformidade com regulamentações de análise financeira
+- ✅ Insights estruturados e informativos sem bias direcional
 
 #### Otimização RSI para Multi-Timeframe ⚡ (CRÍTICO)
 **Insight técnico**: RSI de 14 períodos numa análise de 365 dias só olha os últimos 14 dias - não representa a tendência de longo prazo

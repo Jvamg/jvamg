@@ -31,6 +31,45 @@ class StandardCryptoAnalysisToolKit(Toolkit):
         self.register(self.quick_crypto_summary)
         self.register(self.multi_crypto_comparison)
 
+    def _create_raw_data_section(self, coin_data: str, market_data: str, 
+                                short_tech: str, long_tech: str, 
+                                news_data: str, news_count: int) -> str:
+        """
+        Cria seção com dados RAW PUROS dos endpoints (sem formatação)
+        """
+        return f"""
+### 🔍 **Market Data Endpoint RAW**
+```json
+{market_data}
+```
+
+### 📊 **Technical Analysis RAW - Short Term (30d)**
+```
+{short_tech}
+```
+
+### 📈 **Technical Analysis RAW - Long Term (365d)** 
+```
+{long_tech}
+```
+
+### 📰 **News Data RAW** ({news_count} articles)
+```json
+{news_data if news_data else "No news data available"}
+```
+
+### 💡 **Validation Instructions for Agent**
+Use Reasoning/Thinking Tools to analyze the RAW data above and verify:
+- RSI values are in valid range (0-100) and make sense
+- MACD line/signal relationships support trend conclusions
+- SMA values have logical ordering and reasonable prices
+- Market data consistency (price, volume, market cap correlation)
+- News sentiment aligns with technical indicators
+- Short-term vs long-term trend consistency
+"""
+
+
+
     def comprehensive_crypto_analysis(
         self,
         coin_id: str,
@@ -122,13 +161,39 @@ class StandardCryptoAnalysisToolKit(Toolkit):
                 news_count=news_count
             )
 
-            # 6. Formatar output
+            # 6. Formatar output e incluir dados RAW para validação
             if output_format.lower() == "json":
-                return self.formatter.format_json_output(analysis)
+                formatted_result = self.formatter.format_json_output(analysis)
             elif output_format.lower() == "summary":
-                return self.formatter.format_compact_summary(analysis)
+                formatted_result = self.formatter.format_compact_summary(analysis)
             else:  # default to markdown
-                return self.formatter.format_markdown_output(analysis)
+                formatted_result = self.formatter.format_markdown_output(analysis)
+            
+            # 6.1. Anexar dados RAW dos endpoints para validação posterior (sem gastar APIs)
+            raw_data_section = self._create_raw_data_section(
+                coin_data_response, market_data_response, 
+                short_term_analysis, long_term_analysis, 
+                news_response, news_count
+            )
+            
+            # 6.2. Combinar output padronizado + dados RAW
+            final_output = f"""{formatted_result}
+
+---
+
+## 📋 **Dados RAW dos Endpoints** (Para Validação)
+
+{raw_data_section}
+
+**⚠️ INSTRUÇÃO PARA VALIDAÇÃO**: Use Reasoning Tools ou Thinking Tools para analisar se os dados acima fazem sentido:
+- Verificar consistência entre indicadores técnicos
+- Validar se valores estão em ranges realistas (RSI 0-100, preços positivos, etc.)
+- Analisar se tendências de curto e longo prazo são coerentes
+- Identificar possíveis inconsistências nos dados de mercado
+- Pensar criticamente sobre a qualidade e confiabilidade da análise
+"""
+            
+            return final_output
 
         except Exception as e:
             return f"❌ Erro ao realizar análise abrangente: {str(e)}\nPor favor, verifique se o coin_id '{coin_id}' é válido."
