@@ -7,3 +7,4 @@ mplfinance==0.12.10b0
 colorama==0.4.6
 requests>=2.31.0
 python-dotenv>=1.0.0
+agno>=1.0.0
