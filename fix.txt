@@ -1,1 +1,5 @@
-ajustar para q quem preencha os campos seja o agente com o pensamento dele
+otimizar chamadas a api
+confirmar oq precisa ser entregue na analise
+criar outros tipos de função
+performance em tempo
+acho melhor ja trocar pra fast api
