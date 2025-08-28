@@ -228,31 +228,53 @@ Impacto esperado:
   - Atualização: `get_latest_articles` agora usa limite mínimo de 15 itens por padrão para melhorar análise de sentimento
   - Atualização: parâmetro de query ajustado para `categories` (padrão oficial CoinDesk). O envio de `categories` só ocorre quando `category` é fornecido pelo usuário
 
-### Configuração do Agente
-- `src/agente/app.py`: Aplicação principal do agente usando AGNO framework
+### Configuração do Agente (ATUALIZADO: Agent + CLI JSON)
+- `src/agente/app.py`: Agent interno + dispatcher + CLI (sem servidor)
   
-  **Instruções Detalhadas do Agente (Atualizadas com Análise Técnica Avançada):**
-  - **Search & Discovery**: Usa GoogleSearchTools para buscar tickers/nomes + get_coins_list() para IDs corretos + get_trending() para descobrir moedas populares
-  - **Market Data**: get_market_data() para preços atuais/volume/market cap + get_coin_data() para informações completas com descrição/website/ranking
-  - **Technical Analysis (PRIORIDADE MÁXIMA) ⭐**: 
-    - **SEMPRE usa perform_technical_analysis()** para análises de mercado, predições de preço, insights de investimento
-    - **Análise técnica obrigatória**: RSI, MACD, Médias Móveis (SMA 20, 50, 200) para TODAS as consultas de análise
-    - **Processo integrado de 3 etapas**: 1) Análise técnica 2) Notícias recentes 3) Combinação para insights abrangentes
-    - **Interpretação contextualizada**: RSI >70=sobrecompra, RSI <30=sobrevenda, cruzamentos MACD=mudanças momentum, SMA50>SMA200=golden cross
-    - **Score de convergência**: compara sinais técnicos com sentimento de notícias para alta confiança vs divergências explicadas
-  - **Historical Analysis**: get_coin_history() para datas específicas + get_coin_chart() para análise de tendências + get_coin_ohlc() para dados candlestick/análise técnica
-  - **OHLC para padrões**: Instruções do agente reforçadas para complementar explicações de padrões com `get_coin_ohlc()` (contexto de candles) e usar `market_chart` para indicadores
-  - **Moeda padrão**: Instruções do agente reforçadas para usar `DEFAULT_VS_CURRENCY` quando a preferência do usuário não estiver explícita
-  - **Notícias por categoria**: agora, sempre que for feita uma análise de uma cripto, o agente resolve o símbolo via `get_coin_symbol(coin_id)` e filtra notícias com `get_latest_articles(limit=15, category=<SYMBOL>)` (ex.: BTC/ETH)
-  - **Analysis & Reasoning**: ReasoningTools para interpretar dados, comparar cryptos, fornecer insights + conversão para moedas preferidas do usuário
-  - **Trend Prediction & Analysis (NOVO)**: 
-    - **SEMPRE inclui análise de direção da tendência** (bullish/bearish/sideways) em todas as respostas
-    - **Análise multi-timeframe** usando dados de 7d, 30d, 90d para identificar tendências de curto e longo prazo
-    - **Padrões técnicos** (triângulos, head & shoulders, double tops/bottoms) com explicação das implicações
-    - **Cenários probabilísticos**: "Se a tendência continuar..."/Se romper suporte..." com níveis de resistência/suporte
-    - **Indicadores técnicos**: médias móveis, momentum, volume para validar força da tendência
-    - **Linguagem probabilística**: usa "maior probabilidade de...", "indicadores sugerem..." ao invés de certezas
-  - **Response Guidelines**: Formatação clara com emojis/símbolos + contexto sobre market cap rank/volume + disclaimers que análises são baseadas em dados históricos, não conselhos financeiros + explicações simples para análise técnica
+  **Descrição**: Agent interno baseado em features que retorna somente JSON estruturado. Sem servidor por enquanto; execução via CLI ou chamada programática.
+
+  **Instruções**:
+  - Execute via `run_feature(feature, **params)` (programático) ou CLI.
+  - Feature atual: `analysis`.
+  - `coin_id` (CoinGecko) é obrigatório para `feature=analysis`.
+  - Resposta padronizada: `{ ok, feature, data, errors, meta }`.
+
+  **Exemplo programático**:
+  ```python
+  from src.agente.app import run_feature
+  resp = run_feature("analysis", coin_id="bitcoin", vs_currency="usd", timeframe="30")
+  print(resp)
+  ```
+
+  **Esquema de Response (agora montado pelo Agent)**:
+  ```json
+  {
+    "ok": true,
+    "feature": "analysis",
+    "data": {
+      "current": {"price": "...", "change_24h": "...", "market_cap": "..."},
+      "technical": {"rsi": "...", "macd": {"line": "...", "signal": "..."}, "sma": {"sma_20": "...", "sma_50": "...", "sma_200": "..."}},
+      "supports_resistances": {"support": ["..."], "resistance": ["..."]},
+      "news_summary": [{"title": "...", "sentiment": "POSITIVE|NEUTRAL|NEGATIVE"}],
+      "meta": {"coin_id": "bitcoin", "vs_currency": "usd", "timeframe": "30"}
+    },
+    "errors": [],
+    "meta": { "request_id": "<uuid>" }
+  }
+  ```
+
+  **Como executar (CLI, sem servidor por enquanto)**:
+  ```bash
+  # Requisitos
+  pip install -r requirements.txt
+
+  # Executar feature 'analysis' (exemplo)
+  python -m src.agente.app analysis --coin_id bitcoin --vs_currency usd --timeframe 30
+  ```
+
+  **Notas**:
+  - A análise JSON é construída por um Agent interno (AGNO), sem interface de chat, seguindo instruções para emitir somente JSON.
+  - Identificação de ativo via `coin_id` (CoinGecko) é obrigatória para `feature=analysis`.
 
 - `src/agente/currency_converter.py`: Toolkit de conversão de moedas via UniRateAPI
 
@@ -299,43 +321,37 @@ Impacto esperado:
 - **Timeouts configuráveis**: Controle fino sobre tempo limite de requisições
 - **Validação de entrada**: Verificação de parâmetros antes de fazer chamadas externas
 
-### Sistema de Output Padronizado ⭐ (NOVA IMPLEMENTAÇÃO)
-**Problema resolvido**: Inconsistência nos formatos de análise e necessidade de outputs estruturados
+### Sistema de Análise Simplificado ⭐ (ATUALIZAÇÃO RECENTE)
+**Mudança implementada**: Remoção do sistema de output padronizado complexo, retorno ao uso direto dos toolkits
 
-**✅ Solução implementada - Sistema de Output Padronizado**:
-1. **OutputFormatter**: Classe principal para formatação consistente de análises
-   - Suporte a formatos múltiplos: Markdown, JSON, resumo compacto
-   - Estruturas de dados padronizadas com dataclasses
-   - Formatação automática com emojis e símbolos monetários apropriados
+**✅ Simplificação realizada**:
+1. **Remoção de complexidade desnecessária**:
+   - Removidos arquivos do sistema de output padronizado
+   - Eliminada camada adicional de formatação e adaptação
+   - Retorno ao uso direto e transparente dos toolkits existentes
    
-2. **AgnoOutputAdapter**: Adaptador que converte respostas do agente para formato estruturado
-   - Parsing inteligente de análises técnicas (RSI, MACD, SMAs)
-   - Extração automática de dados de mercado e sentimento
-   - Geração de insights e recomendações contextualizadas
-   
-3. **StandardCryptoAnalysisToolKit**: ToolKit integrado ao framework Agno
-   - `comprehensive_crypto_analysis()`: Análise completa padronizada
-   - `quick_crypto_summary()`: Resumos rápidos estruturados  
-   - `multi_crypto_comparison()`: Comparações formatadas entre moedas
-   - Integração transparente com CoinGeckoToolKit e CoinDeskToolKit existentes
+2. **StandardCryptoAnalysisToolKit simplificado**:
+   - `get_comprehensive_market_analysis()`: Análise combinando dados de múltiplas fontes
+   - `get_crypto_overview()`: Resumo rápido de uma criptomoeda
+   - Integração direta com CoinGeckoToolKit e CoinDeskToolKit sem camadas intermediárias
 
-**Benefícios implementados**:
-- ✅ Outputs consistentes e profissionais para todas as análises
-- ✅ Estruturação automática de dados complexos (multi-timeframe, sentimento, técnico)
-- ✅ Flexibilidade de formatos conforme necessidade (Markdown/JSON/Summary)
-- ✅ Integração transparente com agente Agno existente
-- ✅ Score de confiança baseado na convergência de indicadores
-- ✅ Geração automática de takeaways, riscos e oportunidades
+**Benefícios da simplificação**:
+- ✅ Redução da complexidade do código
+- ✅ Eliminação de componentes desnecessários
+- ✅ Manutenção mais fácil e direta
+- ✅ Uso transparente das funcionalidades dos toolkits base
+- ✅ Remoção de overhead de processamento
 
-**Arquivos implementados**:
-- `src/agente/output_formatter.py`: Classes base e formatadores
-- `src/agente/agno_output_adapter.py`: Adaptador para parsing de respostas
-- `src/agente/standard_crypto_toolkit.py`: ToolKit integrado ao Agno
-- `src/agente/exemplo_output_padronizado.py`: Exemplos completos de uso
-- `src/agente/README_OUTPUT_PADRONIZADO.md`: Documentação completa
-- `src/agente/app.py`: Atualizado com novo toolkit e instruções
+**Arquivos removidos**:
+- `src/agente/output_formatter.py`: Sistema de formatação padronizada (removido)
+- `src/agente/agno_output_adapter.py`: Adaptador de parsing complexo (removido)
+- `src/agente/README_OUTPUT_PADRONIZADO.md`: Documentação do sistema complexo (removida)
 
-**Status**: ✅ **Implementado e Integrado** - Sistema completamente funcional e documentado
+**Arquivos mantidos e simplificados**:
+- `src/agente/standard_crypto_toolkit.py`: ToolKit simplificado com funcionalidades básicas
+- `src/agente/app.py`: Atualizado com instruções simplificadas
+
+**Status**: ✅ **Simplificado e Funcional** - Sistema mais direto e fácil de manter
 
 #### Correção SMA 50 - Dados Insuficientes ⭐ (NOVA IMPLEMENTAÇÃO)
 **Problema identificado**: Análises de curto prazo (30 dias) falhavam ao calcular SMA 50 por dados insuficientes
@@ -420,60 +436,7 @@ Impacto esperado:
 **Resultado**: ✅ Parsing preciso de todos os valores monetários formatados
 **Teste verificado**: $116,617.02 → 116617.02 (float correto), $2.19T → 2190000000000 (2.19 trilhões)
 
-#### Sistema de Validação com Dados RAW - Economizando APIs ⭐ (NOVA IMPLEMENTAÇÃO)
-**Necessidade identificada**: Agente deve validar dados sem gastar chamadas de API adicionais
-- **Problema**: Validação automática gastaria mais APIs para re-extrair dados
-- **Solução**: Incluir dados RAW dos endpoints no output + instrução para agente usar reasoning/thinking tools
 
-**✅ Solução implementada - Output com Dados RAW + Validação Manual**:
-1. **Anexar dados RAW PUROS no output padronizado**:
-   ```python
-   # StandardCryptoAnalysisToolKit inclui seção automática:
-   ## 📋 **Dados RAW dos Endpoints** (Para Validação)
-   ### 🔍 Market Data Endpoint RAW (JSON exato da API)
-   ### 📊 Technical Analysis RAW - Short Term (texto completo do toolkit)  
-   ### 📈 Technical Analysis RAW - Long Term (texto completo do toolkit)
-   ### 📰 News Data RAW (JSON exato da API)
-   ### 💡 Validation Instructions for Agent
-   ```
-
-2. **Instrução específica para agente**:
-   - `🧠 CRITICAL: After receiving ANY output from comprehensive_crypto_analysis(), ALWAYS use Reasoning Tools or Thinking Tools to validate`
-   - Validar RSI (0-100), MACD, SMAs, preços, mudanças extremas
-   - Verificar consistência entre timeframes e com notícias
-   - Ajustar confiança baseado na qualidade dos dados
-
-3. **Dados RAW totalmente puros**:
-   - **Market Data**: JSON exato como retornado pela CoinGecko API
-   - **Technical Analysis**: Texto completo e não-processado dos toolkits
-   - **News Data**: JSON exato como retornado pela CoinDesk API
-   - **Sem truncamento**: Dados completos para validação precisa
-   - **Sem formatação**: Exatamente como as APIs entregam
-
-4. **Economização de APIs**:
-   - **Zero** chamadas adicionais de API para validação
-   - Dados já coletados são reutilizados para verificação
-   - Agente usa reasoning interno ao invés de novos requests
-
-5. **Processo de validação**:
-   ```
-   1. StandardCryptoAnalysisToolKit gera análise + dados RAW puros
-   2. Agente recebe output completo (análise + dados crus das APIs)
-   3. Agente usa Reasoning/Thinking Tools para validar dados originais
-   4. Agente ajusta confiança e menciona inconsistências
-   5. Resposta final inclui nota de validação baseada em dados reais
-   ```
-
-**Exemplos de validações que agente fará com dados RAW puros**:
-- "No JSON da CoinGecko vejo: 'current_price': 111095.56 - valor positivo e realista ✅"
-- "No output do toolkit: 'RSI (14): 41.15' - está no range 0-100 e coerente ✅"  
-- "Comparando SMAs no texto RAW: SMA20 < SMA50 confirma tendência de baixa ✅"
-- "No JSON de news vejo 15 artigos recentes, sentiment pode explicar movimento ✅"
-- "MACD line vs signal no RAW confirma direção bearish da análise ✅"
-
-**Resultado**: ✅ Validação inteligente usando dados ORIGINAIS das APIs, sem processamento intermediário
-**Economia**: ✅ Zero chamadas adicionais, máxima transparência com dados crus das fontes
-**Qualidade**: ✅ Agente valida contra dados reais das APIs, não versões processadas
 
 #### Comandos de Teste
 Para verificar se as correções estão funcionando:
@@ -482,9 +445,8 @@ cd src/agente
 python -c "from coingeckoToolKit import CoinGeckoToolKit; tk = CoinGeckoToolKit(); print(tk.perform_technical_analysis('bitcoin'))"
 python -c "from coindeskToolKit import CoinDeskToolKit; tk = CoinDeskToolKit(); print(tk.get_latest_articles(5, 'bitcoin'))"
 
-# NOVO - Testar sistema de output padronizado
-python exemplo_output_padronizado.py
-python -c "from standard_crypto_toolkit import StandardCryptoAnalysisToolKit; tk = StandardCryptoAnalysisToolKit(); print(tk.quick_crypto_summary('bitcoin'))"
+# Testar sistema simplificado
+python -c "from standard_crypto_toolkit import StandardCryptoAnalysisToolKit; tk = StandardCryptoAnalysisToolKit(); print(tk.get_crypto_overview('bitcoin'))"
 ```
 
 **Teste específico da correção (market_chart com close prices + 200+ dias):**
