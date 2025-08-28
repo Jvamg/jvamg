@@ -1,0 +1,70 @@
+{
+    "ok": true,
+    "data": {
+        "type": "Bitcoin 30d comprehensive",
+        "summary": "Short-term (30d) technicals show mild bearish pressure: BTC is trading below its 20- and 50-day SMAs with RSI in neutral territory and a negative MACD histogram. Market microstructure indicates a recent high ~$124k and a short-term low around $110k. News flow (CoinDesk + aggregated) is mixed-to-slightly-positive while the Fear & Greed Index is neutral (48). Overall: cautious/neutral short-term outlook with downside risk if $110k breaks, and upside capped by the SMA zone ~$115.8k–$116.7k unless momentum and macro catalysts push price above $124k.",
+        "price_current": 113123.0,
+        "price_change_24h": 1.82,
+        "price_trend": "neutral-to-bearish",
+        "volume_24h": 38025098817.0,
+        "rsi": 45.83,
+        "macd_signal": "MACD below signal; bearish histogram (-409).",
+        "sma_20": 115838.31,
+        "sma_50": 116655.33,
+        "technical_signal": "hold (cautious) / slight sell bias",
+        "resistance_levels": [
+            115838.31,
+            116655.33,
+            124000.0
+        ],
+        "support_levels": [
+            110000.0,
+            108000.0,
+            100000.0
+        ],
+        "levels_confidence": 0.65,
+        "news_sentiment": "slightly positive",
+        "market_sentiment": "neutral",
+        "fear_greed_value": 48,
+        "fear_greed_classification": "Neutral",
+        "investment_outlook": "neutral",
+        "risk_level": "medium",
+        "recommendation_confidence": 0.7,
+        "key_factors": [
+            "Price below SMA20 and SMA50 → short-term technical weakness",
+            "RSI ~46 → not oversold/overbought — room to move either way",
+            "Negative MACD histogram → momentum currently favors sellers",
+            "Recent 30d high ≈ $124k and low ≈ $110k define current range",
+            "Fear & Greed Index neutral (48) → balanced retail sentiment",
+            "News flow mixed with a tilt to positive (Tether RGB, macro optimism)"
+        ],
+        "coin_id": "bitcoin",
+        "vs_currency": "usd",
+        "timeframe": "30",
+        "timestamp": "2025-08-28T10:30:00Z",
+        "analysis_depth": "comprehensive",
+        "execution_time_seconds": 49.94,
+        "api_calls_summary": {
+            "total_calls": 3,
+            "tools": {
+                "CoinGeckoToolKit": {
+                    "functions": {
+                        "get_market_data": 1,
+                        "perform_technical_analysis": 1
+                    },
+                    "total_calls": 2
+                },
+                "CoinDeskToolKit": {
+                    "functions": {
+                        "get_latest_articles": 1
+                    },
+                    "total_calls": 1
+                }
+            }
+        }
+    },
+    "errors": [],
+    "meta": {
+        "request_id": "87bf85d9-38ab-406e-bb06-7f153f416dff"
+    }
+}

@@ -1,1 +1,1 @@
-continuar amanha a ensinar o agente a usar as tools para azer a analise e adaptar tudo para json
+ajustar para q quem preencha os campos seja o agente com o pensamento dele
