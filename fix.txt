@@ -1,5 +1,7 @@
 otimizar chamadas a api
-confirmar oq precisa ser entregue na analise
 criar outros tipos de função
 performance em tempo
-acho melhor ja trocar pra fast api
+dados obtiveis x dados pensados
+pensamento da analise
+implementar analise grafista a analise singular
+oq define o technical sign

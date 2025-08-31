@@ -1,0 +1,22 @@
+# FastAPI and server dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Streamlit for interactive interface
+streamlit>=1.28.0
+plotly>=5.17.0
+pandas>=2.1.0
+
+# HTTP requests for Streamlit-API communication
+requests>=2.31.0
+
+# Existing dependencies (if not already installed)
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Note: Make sure you have the agno library and custom toolkits installed:
+# - agno
+# - coingeckoToolKit
+# - coindeskToolKit  
+# - fearGreedToolKit

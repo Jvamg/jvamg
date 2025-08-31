@@ -4,6 +4,14 @@
 Somente detecção/validação de padrões e rotulagem em `src/patterns/**` e seus dados em `data/**`.
 Ignorar agente/web, tools e main.
 
+### ⚠️ Nota: Mudanças Recentes no Agente (fora do escopo mas documentado)
+**2024**: Agente em `src/agente/` foi reestruturado para output JSON estruturado:
+- **Modelo separado**: `ObtainableData` (dados de API) + `ThoughtAnalysis` (interpretações AI) + `AnalysisMetadata`
+- **Parâmetros simplificados**: Removido `analysis_depth`, mantido apenas `coin_id`, `vs_currency`, `term_type`
+- **Campos adicionados**: `volume_24h`, `market_cap` aos dados obtíveis
+- **JSON parsing**: Melhorado com fallbacks para strings do agente
+- **Streamlit**: Interface atualizada para nova estrutura de dados
+
 ### Objetivo
 Gerar datasets de padrões (foco em OCO/OCOI), rotular via GUI, revisar erros e consolidar um dataset limpo para modelos.
 
@@ -178,6 +186,31 @@ Impacto esperado:
 ---
 
 ## Seção do Agente (fora do escopo principal)
+
+### Atualização: Métricas de Tokens no JSON de Saída
+- **Data**: Janeiro 2025
+- **Arquivo**: `src/agente/app.py`
+- **Funcionalidade**: Adicionadas métricas de uso de tokens do framework Agno no JSON de resposta da API
+
+**Campos Adicionados ao CryptoAnalysis:**
+- `token_metrics`: Métricas agregadas da execução do agente (input_tokens, output_tokens, total_tokens, etc.)
+- `session_metrics`: Métricas de sessão do agente (métricas acumuladas ao longo da sessão)
+
+**Implementação:**
+- Extração automática de `agent.run_response.metrics` após execução
+- Extração de `agent.session_metrics` para métricas de sessão
+- Função auxiliar `make_json_serializable()` para conversão robusta de objetos complexos
+- Suporte para modelos Pydantic, objetos datetime, e estruturas aninhadas
+- Tratamento robusto de erros caso as métricas não estejam disponíveis
+- Debug logs para acompanhar a extração das métricas
+- Campos opcionais no modelo Pydantic (podem ser `None` se não disponíveis)
+- **Fix**: Resolução do erro "Object of type SessionMetrics is not JSON serializable"
+
+**Benefícios:**
+- Transparência no uso de tokens para análise de custos
+- Monitoramento de performance do agente
+- Dados para otimização de prompts e configurações
+- Compatibilidade com ferramentas de observabilidade
 
 ### Toolkits AGNO
 - `src/agente/coingeckoToolKit.py`: **FUNCIONANDO ✅** - Toolkit completo para dados de criptomoedas via CoinGecko API
