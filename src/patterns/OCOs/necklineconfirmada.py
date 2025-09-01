@@ -34,7 +34,6 @@ class Config:
         'BCH-USD',   # Bitcoin Cash
         'BNB-USD',   # BNB
         'BTC-USD',   # Bitcoin
-        'BSV-USD',   # Bitcoin SV
         'CHZ-USD',   # Chiliz
         'CRO-USD',   # Cronos
         'DOGE-USD',  # Dogecoin
@@ -57,7 +56,6 @@ class Config:
         'OP-USD',    # Optimism
         'QNT-USD',   # Quant
         'SHIB-USD',  # Shiba Inu
-        'SNX-USD',   # Synthetix
         'SOL-USD',   # Solana
         'THETA-USD',  # Theta Network
         'TRX-USD',   # TRON
@@ -289,8 +287,8 @@ class Config:
     # Fix: fator de desvio mínimo para pivô de extensão parametrizado
     ZIGZAG_EXTENSION_DEVIATION_FACTOR = 0.25
     # Debug toggles
-    HNS_DEBUG = False
-    DTB_DEBUG = False
+    HNS_DEBUG = True
+    DTB_DEBUG = True
     # Default verbose debug disabled for TT/TB
     TTB_DEBUG = True  # Fix: disable noisy debug by default
 

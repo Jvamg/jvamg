@@ -21,6 +21,7 @@ from agno.tools.googlesearch import GoogleSearchTools
 from coingeckoToolKit import CoinGeckoToolKit
 from coindeskToolKit import CoinDeskToolKit
 from fearGreedToolKit import FearGreedToolKit
+from patternsToolKit import PatternToolKit
 
 load_dotenv()
 
@@ -76,6 +77,10 @@ class ObtainableData(BaseModel):
     fear_greed_value: Optional[int] = Field(None, description="Fear & Greed index (0-100) from Alternative.me")
     fear_greed_classification: Optional[str] = Field(None, description="Fear & Greed classification from API")
 
+    # Pattern detection (from PatternToolKit)
+    patterns_found_count: Optional[int] = Field(None, description="Total patterns detected (all types)")
+    patterns_sample: List[Dict[str, Any]] = Field(default_factory=list, description="Sample of detected patterns (concise)")
+
 
 class ThoughtAnalysis(BaseModel):
     """AI interpretations and recommendations - subjective analysis"""
@@ -85,11 +90,11 @@ class ThoughtAnalysis(BaseModel):
     
     # AI interpretations of market data
     price_trend: str = Field(..., description="AI assessment: bullish/bearish/neutral")
-    technical_signal: str = Field(..., description="AI recommendation: buy/sell/hold")
+    technical_signal: Optional[str] = Field(..., description="AI recommendation: buy/sell/hold or null if deterministic result doesn't make sense")
     
-    # AI-calculated levels (based on technical analysis)
-    resistance_levels: List[float] = Field(default_factory=list, description="AI-identified resistance levels")
-    support_levels: List[float] = Field(default_factory=list, description="AI-identified support levels")
+    # AI-calculated levels (based on technical analysis) - EXACTLY 2 levels each
+    resistance_levels: List[float] = Field(default_factory=list, description="EXACTLY 2 most obvious resistance levels above current price, ordered by proximity")
+    support_levels: List[float] = Field(default_factory=list, description="EXACTLY 2 most obvious support levels below current price, ordered by proximity")
     
     # AI sentiment analysis
     news_sentiment: str = Field(..., description="AI assessment: positive/negative/neutral")
@@ -225,6 +230,9 @@ def parse_tool_calls_from_output(output_text: str) -> Dict[str, Any]:
         },
         "FearGreedToolKit": {
             "get_current_fear_greed": r"📊 \*\*Fear and Greed Index\*\*",
+        },
+        "PatternToolKit": {
+            "detect_patterns": r"🎯 \[DEBUG\] pattern_detect CHAMADA!",
         }
     }
     
@@ -286,6 +294,7 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
                 CoinGeckoToolKit(),
                 CoinDeskToolKit(timeout=30),
                 FearGreedToolKit(),
+                PatternToolKit(),
             ],
             response_model=CryptoAnalysis,
             use_json_mode=True,  # Enabled to ensure consistent JSON output
@@ -293,6 +302,7 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
                 "Expert crypto analyst agent that autonomously analyzes cryptocurrencies and returns structured data."
             ),
             instructions=[
+                f"LANGUAGE: Always write ALL outputs in ENGLISH only.",
                 f"CRITICAL: You MUST return a complete CryptoAnalysis object with ALL 3 sections properly filled.",
                 f"STRUCTURED OUTPUT: Follow the exact CryptoAnalysis schema with obtainable/thoughts/metadata sections.",
                 f"",
@@ -305,6 +315,9 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
                 f"1) Use CoinGeckoToolKit to get current market data for {coin_id}",
                 f"2) Use FearGreedToolKit.get_current_fear_greed() for market sentiment",  
                 f"3) Use CoinGeckoToolKit for technical analysis and price levels",
+                f"3.5) Use PatternToolKit.detect_patterns(coin_id='{coin_id}', vs_currency='{vs_currency}', term_type='{term_classification}', save_csv=false) and map JSON to obtainable:",
+                f"    - obtainable.patterns_found_count = result.found_count",
+                f"    - obtainable.patterns_sample = a concise list from result.sample (e.g., padrao_tipo, score_total, timeframe, strategy)",
                 f"4) Use CoinDeskToolKit for news sentiment",
                 f"5) ADAPT your analysis focus based on the {term_classification} term strategy",
                 f"6) CHOOSE appropriate range (days) for your {term_classification} term analysis",
@@ -328,13 +341,15 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
                 f"- sma_200: SMA 200 calculated by CoinGeckoToolKit (number)",
                 f"- fear_greed_value: Use EXACT value from FearGreedToolKit (0-100 integer)",
                 f"- fear_greed_classification: Use EXACT classification from FearGreedToolKit (string)",
+                f"- patterns_found_count: Use EXACT 'found_count' from PatternToolKit JSON",
+                f"- patterns_sample: Use concise items from PatternToolKit JSON",
                 f"",
                 f"THOUGHT ANALYSIS (your AI interpretations) - YOUR THINKING ONLY:",
-                f"- summary: YOUR executive summary of complete analysis",
+                f"- summary: YOUR executive summary; include a brief chart-pattern note: if any pattern was detected name the most relevant one and its typical implication; otherwise explicitly say 'No chart pattern detected'",
                 f"- price_trend: YOUR interpretation - classify as 'bullish', 'bearish', or 'neutral'",
-                f"- technical_signal: YOUR recommendation based on analysis - 'buy', 'sell', or 'hold'",
-                f"- resistance_levels: YOUR identified resistance levels as array of prices",
-                f"- support_levels: YOUR identified support levels as array of prices", 
+                f"- technical_signal: GET deterministic result BUT validate if makes sense - use exact value OR null if conflicts",
+                f"- resistance_levels: EXACTLY 2 most obvious resistance levels ABOVE current price (closest first, then next closest)",
+                f"- support_levels: EXACTLY 2 most obvious support levels BELOW current price (closest first, then next closest)", 
                 f"- news_sentiment: YOUR analysis of news - classify as 'positive', 'negative', or 'neutral'",
                 f"- market_sentiment: YOUR overall market assessment",
                 f"- investment_outlook: YOUR investment recommendation - 'bullish', 'bearish', or 'neutral'",
@@ -353,7 +368,7 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
                 f"- Verify obtainable.fear_greed_value matches obtainable.fear_greed_classification ranges",
                 f"- Check that thoughts.risk_level is consistent with market volatility and sentiment",
                 f"- Validate that thoughts.recommendation_confidence reflects the quality of available data",
-                f"- Ensure thoughts.resistance_levels/support_levels are realistic based on obtainable.price_current",
+                f"- Ensure thoughts.resistance_levels/support_levels are EXACTLY 2 levels each, realistic and properly ordered",
                 f"- Confirm thoughts.news_sentiment aligns with thoughts.market_sentiment",
                 f"",
                 f"BEFORE FINALIZING: Review all fields for logical consistency and accuracy.",
@@ -365,6 +380,8 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
         print("🧠 Creating analysis prompt...")
         prompt = f"""
         Perform a complete cryptocurrency analysis for {coin_id} specifically tailored for {term_classification.upper()} TERM trading/investment.
+
+        LANGUAGE: Always respond in ENGLISH only.
 
         Analysis Parameters:
         - Coin: {coin_id}
@@ -401,20 +418,61 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
         1) Get market data using CoinGeckoToolKit
         2) Get Fear & Greed Index using FearGreedToolKit
         3) Perform technical analysis using CoinGeckoToolKit (adjust focus for {term_classification} term)
-        4) Get news sentiment using CoinDeskToolKit 
-        5) DETERMINE appropriate range for {term_classification} term analysis:
+        3.5) Run PatternToolKit.detect_patterns(coin_id='{coin_id}', vs_currency='{vs_currency}', term_type='{term_classification}', save_csv=false) and map to obtainable:
+            - patterns_found_count = result.found_count
+            - patterns_sample = concise objects from result.sample (e.g., padrao_tipo, score_total, timeframe, strategy)
+        4) **IMPORTANT**: Use calculate_deterministic_technical_signal for consistent technical_signal
+           - Call this tool with same coin_id, vs_currency, and days as your analysis
+           - Extract the 'technical_signal' value from the JSON response
+           - Use this exact value in thoughts.technical_signal (do NOT modify or interpret)
+           - The function provides deterministic rules-based recommendation
+        5) Get news sentiment using CoinDeskToolKit 
+        6) DETERMINE appropriate range for {term_classification} term analysis:
            - SHORT term: Choose around 30 days for momentum/volatility focus
            - MEDIUM term: Choose around 90 days for trend analysis
            - LONG term: Choose around 365 days for fundamental analysis
-        6) TAILOR your analysis specifically for {term_classification} term strategy
-        7) Fill ALL CryptoAnalysis sections with your {term_classification}-term focused findings:
+        7) TAILOR your analysis specifically for {term_classification} term strategy
+        8) Fill ALL CryptoAnalysis sections with your {term_classification}-term focused findings:
            - obtainable: Put raw API data (price_current, rsi, fear_greed_value, etc.)
            - thoughts: Put your interpretations (summary, price_trend, technical_signal, etc.)
            - metadata: Put analysis context (coin_id, range, term_classification)
-        8) **SELF-REVIEW STEP**: Before finalizing, carefully review your analysis:
-           - Does thoughts.price_trend align with thoughts.technical_signal?
+
+        PATTERN SUMMARY RULE:
+        In your thoughts.summary, include a concise chart-pattern note. If obtainable.patterns_found_count > 0, name the most relevant detected pattern from obtainable.patterns_sample (e.g., H&S/Inverse H&S, Double/Triple Top/Bottom) and briefly state its typical implication (bullish/bearish/neutral). If none were found, explicitly say "No chart pattern detected". Keep this to one short sentence.
+        
+        **SUPPORT/RESISTANCE IDENTIFICATION RULES:**
+        MANDATORY: Always provide EXACTLY 2 resistance levels and EXACTLY 2 support levels.
+        
+        For thoughts.resistance_levels (EXACTLY 2 levels ABOVE current price):
+        - Look at technical analysis data for levels ABOVE current price:
+          * Recent significant highs from price data
+          * Moving averages (SMA 20, 50, 200) if above current price
+          * Upper Bollinger band if available
+          * Round psychological numbers above current price
+        - Select the 2 CLOSEST and MOST OBVIOUS resistance levels
+        - Order: [closest_resistance, next_closest_resistance]
+        - Must be realistic and based on actual data from your technical analysis
+        
+        For thoughts.support_levels (EXACTLY 2 levels BELOW current price):
+        - Look at technical analysis data for levels BELOW current price:
+          * Recent significant lows from price data  
+          * Moving averages (SMA 20, 50, 200) if below current price
+          * Lower Bollinger band if available
+          * Round psychological numbers below current price
+        - Select the 2 CLOSEST and MOST OBVIOUS support levels
+        - Order: [closest_support, next_closest_support]  
+        - Must be realistic and based on actual data from your technical analysis
+        
+        CRITICAL: If you cannot identify 2 clear levels in either direction, use reasonable estimates based on:
+        - Price volatility patterns from your data
+        - Percentage-based levels (e.g., ±5%, ±10% from current price)
+        - But ALWAYS provide exactly 2 levels for each
+        
+        9) **SELF-REVIEW STEP**: Before finalizing, carefully review your analysis:
+           - Did you validate the deterministic technical_signal result? (use exact value OR null if conflicts)
+           - Does thoughts.price_trend align with thoughts.technical_signal (if not null)?
            - Is thoughts.investment_outlook consistent with all indicators?
-           - Are thoughts.resistance_levels/support_levels realistic based on obtainable.price_current?
+           - Are thoughts.resistance_levels/support_levels EXACTLY 2 levels each, properly ordered by proximity?
            - Does thoughts.recommendation_confidence reflect data quality and certainty?
            - Are all sentiment indicators (thoughts.news_sentiment, obtainable.fear_greed) logically consistent?
            - Do thoughts.key_factors actually explain your recommendation?
@@ -450,9 +508,9 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
           "thoughts": {{
             "summary": "[YOUR_EXECUTIVE_SUMMARY]",
             "price_trend": "[YOUR_INTERPRETATION]",
-            "technical_signal": "[YOUR_RECOMMENDATION]",
-            "resistance_levels": [YOUR_IDENTIFIED_LEVELS],
-            "support_levels": [YOUR_IDENTIFIED_LEVELS],
+            "technical_signal": "[USE_DETERMINISTIC_RESULT_OR_NULL]",
+            "resistance_levels": [CLOSEST_RESISTANCE, NEXT_CLOSEST_RESISTANCE],
+            "support_levels": [CLOSEST_SUPPORT, NEXT_CLOSEST_SUPPORT],
             "investment_outlook": "[YOUR_OUTLOOK]",
             "risk_level": "[YOUR_ASSESSMENT]",
             "recommendation_confidence": [YOUR_CONFIDENCE_0_TO_1]
@@ -465,6 +523,32 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
         }}
         
         REMEMBER: obtainable = FACTS, thoughts = YOUR_ANALYSIS, metadata = CONTEXT
+        
+        **CRITICAL REQUIREMENTS**:
+        
+        For thoughts.technical_signal - DETERMINISTIC with VALIDATION:
+        1. Call: calculate_deterministic_technical_signal(coin_id, vs_currency, chosen_days)
+        2. Parse the JSON response to extract the 'technical_signal' field
+        3. VALIDATE if this result makes sense with your overall analysis:
+           - Does it align with your price_trend assessment?
+           - Does it match your investment_outlook?
+           - Does it fit with news_sentiment and market conditions?
+           - Does it make logical sense given Fear & Greed Index?
+        4. IF the deterministic result MAKES SENSE: Use the exact value ("buy", "sell", or "hold")
+        5. IF the deterministic result CONFLICTS with your analysis: Set to null
+           Examples of conflicts:
+           - Deterministic says "buy" but news_sentiment is very negative and Fear & Greed is extreme fear
+           - Deterministic says "sell" but strong bullish fundamentals and positive market sentiment
+           - Deterministic result contradicts multiple other indicators strongly
+        6. NEVER modify the deterministic value - only use it exactly OR null
+        7. When setting to null, briefly explain in your summary why the deterministic signal was rejected
+        
+        For thoughts.resistance_levels and thoughts.support_levels:
+        1. ALWAYS provide EXACTLY 2 resistance levels and EXACTLY 2 support levels
+        2. NO exceptions - even if you only find 1 obvious level, estimate a second one
+        3. Order by proximity to current price (closest first)
+        4. Base on actual technical data from your analysis tools
+        5. If uncertain, use percentage-based estimates from current price
         """
 
         print("🤖 Agent starting analysis...")
@@ -560,6 +644,53 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
             print(f"❌ [DEBUG] {error_msg}")
             raise Exception(error_msg)
         
+        # Enrich with pattern detection (deterministic call, independent of agent)
+        try:
+            print("🎯 [DEBUG] pattern_detect via API call...")
+            pattern_tool = PatternToolKit()
+            # Optional debug controls via environment
+            try:
+                mod = pattern_tool._ensure_module()
+                if os.getenv('PATTERN_DEBUG_ALL', '').lower() == 'true':
+                    mod.Config.HNS_DEBUG = True
+                    mod.Config.DTB_DEBUG = True
+                    mod.Config.TTB_DEBUG = True
+                lookback_env = os.getenv('PATTERN_LOOKBACK')
+                if lookback_env:
+                    try:
+                        mod.Config.RECENT_PATTERNS_LOOKBACK_COUNT = int(lookback_env)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            patt_json_str = pattern_tool.detect_patterns(
+                coin_id=coin_id,
+                vs_currency=vs_currency,
+                term_type=term_classification,
+                save_csv=False,
+            )
+            patt = json.loads(patt_json_str)
+            if patt.get('ok'):
+                if 'obtainable' not in analysis_data:
+                    analysis_data['obtainable'] = {}
+                analysis_data['obtainable']['patterns_found_count'] = patt.get('found_count', 0)
+                # Take concise fields for sample
+                sample = patt.get('sample', []) or []
+                concise = []
+                for r in sample:
+                    concise.append({
+                        'padrao_tipo': r.get('padrao_tipo'),
+                        'score_total': r.get('score_total'),
+                        'timeframe': r.get('timeframe'),
+                        'strategy': r.get('strategy'),
+                    })
+                analysis_data['obtainable']['patterns_sample'] = concise
+            else:
+                print(f"⚠️ [DEBUG] Pattern detection returned not ok: {patt}")
+        except Exception as e:
+            print(f"⚠️ [DEBUG] Pattern detection error: {str(e)}")
+
         # Validate that agent actually filled critical fields with new structure
         critical_obtainable = ['price_current', 'price_change_24h']
         critical_thoughts = ['summary', 'technical_signal', 'investment_outlook', 'recommendation_confidence']
@@ -573,11 +704,16 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
             if not obtainable_data.get(field):
                 missing_fields.append(f"obtainable.{field}")
         
-        # Check thought analysis
+        # Check thought analysis (allow technical_signal to be null)
         thoughts_data = analysis_data.get('thoughts', {})
         for field in critical_thoughts:
-            if not thoughts_data.get(field):
-                missing_fields.append(f"thoughts.{field}")
+            if field == 'technical_signal':
+                # Allow null for technical_signal if deterministic result was rejected
+                if 'technical_signal' not in thoughts_data:
+                    missing_fields.append(f"thoughts.{field}")
+            else:
+                if not thoughts_data.get(field):
+                    missing_fields.append(f"thoughts.{field}")
         
         # Check metadata
         metadata_data = analysis_data.get('metadata', {})
@@ -594,20 +730,25 @@ def run_analysis(coin_id: str, **params: Any) -> Dict[str, Any]:
         # Check price trend vs technical signal alignment with new structure
         thoughts_data = analysis_data.get('thoughts', {})
         price_trend = thoughts_data.get('price_trend', '').lower()
-        tech_signal = thoughts_data.get('technical_signal', '').lower()
+        tech_signal = thoughts_data.get('technical_signal')
         outlook = thoughts_data.get('investment_outlook', '').lower()
         
         consistency_warnings = []
         
-        if price_trend == 'bullish' and tech_signal == 'sell':
-            consistency_warnings.append("Price trend (bullish) conflicts with technical signal (sell)")
-        elif price_trend == 'bearish' and tech_signal == 'buy':
-            consistency_warnings.append("Price trend (bearish) conflicts with technical signal (buy)")
-            
-        if outlook == 'bullish' and tech_signal == 'sell':
-            consistency_warnings.append("Investment outlook (bullish) conflicts with technical signal (sell)")
-        elif outlook == 'bearish' and tech_signal == 'buy':
-            consistency_warnings.append("Investment outlook (bearish) conflicts with technical signal (buy)")
+        # Only validate technical_signal consistency if it's not null (not rejected by agent)
+        if tech_signal is not None:
+            tech_signal_lower = tech_signal.lower()
+            if price_trend == 'bullish' and tech_signal_lower == 'sell':
+                consistency_warnings.append("Price trend (bullish) conflicts with technical signal (sell)")
+            elif price_trend == 'bearish' and tech_signal_lower == 'buy':
+                consistency_warnings.append("Price trend (bearish) conflicts with technical signal (buy)")
+                
+            if outlook == 'bullish' and tech_signal_lower == 'sell':
+                consistency_warnings.append("Investment outlook (bullish) conflicts with technical signal (sell)")
+            elif outlook == 'bearish' and tech_signal_lower == 'buy':
+                consistency_warnings.append("Investment outlook (bearish) conflicts with technical signal (buy)")
+        else:
+            print("ℹ️ [DEBUG] Technical signal is null - agent rejected deterministic result due to conflicts")
         
         # Check confidence score is reasonable
         confidence = thoughts_data.get('recommendation_confidence', 0)

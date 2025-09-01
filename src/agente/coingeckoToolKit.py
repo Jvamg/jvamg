@@ -1,5 +1,6 @@
 import requests
 import os
+import json
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime
@@ -1286,3 +1287,202 @@ class CoinGeckoToolKit(Toolkit):
             error_msg = f"Error during technical calculations for {coin_id}: {str(e)}"
             print(f"❌ [DEBUG] Erro nos cálculos técnicos: {error_msg}")
             return error_msg
+
+    def calculate_deterministic_technical_signal(self, coin_id: str, vs_currency: str = "usd", days: str = "90") -> str:
+        """
+        Calculate technical signal using deterministic rules for consistent results.
+        
+        This function provides a rule-based approach to generate consistent technical signals
+        by scoring various technical indicators with predefined weights.
+        
+        Scoring System:
+        - RSI: Overbought (>70) = -2, Oversold (<30) = +2, Neutral zones get smaller weights
+          * NOTE: RSI is ONLY used for short/medium-term analysis (≤200 days)
+          * For long-term analysis (>200 days), RSI is excluded as it's not meaningful
+        - MACD: Bullish crossover = +2, Bearish crossover = -2
+        - Moving Averages: Price above = +1, Price below = -1 (for each SMA 20, 50, 200)
+        - Volume: Above average = +1
+        
+        Signal Classification:
+        - Score >= 3: BUY
+        - Score <= -3: SELL  
+        - Score between -2 and 2: HOLD
+        
+        Args:
+            coin_id (str): The CoinGecko ID of the cryptocurrency
+            vs_currency (str): Target currency for price data. Default is "usd"
+            days (str): Number of days of historical data. Default is "90"
+            
+        Returns:
+            str: JSON string containing deterministic signal, score breakdown, and reasoning
+        """
+        try:
+            print(f"🎯 [DEBUG] Calculating deterministic technical signal for {coin_id}")
+            
+            # Get market chart data
+            response_data = self._make_request(f"coins/{coin_id}/market_chart", {
+                "vs_currency": vs_currency,
+                "days": days,
+                "interval": "daily"
+            })
+            
+            prices = response_data.get('prices', [])
+            volumes = response_data.get('total_volumes', [])
+            
+            if not prices or len(prices) < 50:
+                return json.dumps({
+                    "technical_signal": "hold",
+                    "confidence": 0.0,
+                    "reason": "Insufficient data for analysis",
+                    "score": 0,
+                    "breakdown": {}
+                })
+            
+            # Build DataFrame for calculations
+            df = pd.DataFrame(prices, columns=['timestamp', 'close'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # Add volume data if available
+            if volumes:
+                vol_df = pd.DataFrame(volumes, columns=['timestamp', 'volume'])
+                vol_df['timestamp'] = pd.to_datetime(vol_df['timestamp'], unit='ms') 
+                vol_df.set_index('timestamp', inplace=True)
+                df = df.join(vol_df, how='left')
+            
+            # Calculate technical indicators
+            df['rsi'] = ta.rsi(df['close'], length=14)
+            macd_data = ta.macd(df['close'], fast=12, slow=26, signal=9)
+            df = df.join(macd_data)
+            
+            df['sma_20'] = ta.sma(df['close'], length=20)
+            df['sma_50'] = ta.sma(df['close'], length=50) 
+            if len(df) >= 200:
+                df['sma_200'] = ta.sma(df['close'], length=200)
+            
+            # Get current values
+            current_row = df.iloc[-1]
+            current_price = current_row['close']
+            current_rsi = current_row['rsi'] if pd.notna(current_row['rsi']) else None
+            current_macd = current_row['MACD_12_26_9'] if 'MACD_12_26_9' in current_row and pd.notna(current_row['MACD_12_26_9']) else None
+            current_signal = current_row['MACDs_12_26_9'] if 'MACDs_12_26_9' in current_row and pd.notna(current_row['MACDs_12_26_9']) else None
+            sma_20 = current_row['sma_20'] if pd.notna(current_row['sma_20']) else None
+            sma_50 = current_row['sma_50'] if pd.notna(current_row['sma_50']) else None
+            sma_200 = current_row.get('sma_200') if pd.notna(current_row.get('sma_200', float('nan'))) else None
+            
+            # Initialize scoring
+            score = 0
+            breakdown = {}
+            
+            # Determine if this is long-term analysis (similar to existing logic in perform_technical_analysis)
+            requested_days = int(days) if days.isdigit() else 90
+            is_long_term = requested_days > 200
+            
+            # RSI Scoring (only for short/medium-term analysis, not long-term)
+            if current_rsi is not None and not is_long_term:
+                if current_rsi > 70:
+                    score -= 2
+                    breakdown['rsi'] = {'value': current_rsi, 'score': -2, 'reason': 'Overbought (>70)'}
+                elif current_rsi < 30:
+                    score += 2
+                    breakdown['rsi'] = {'value': current_rsi, 'score': 2, 'reason': 'Oversold (<30)'}
+                elif 30 <= current_rsi <= 45:
+                    score += 1
+                    breakdown['rsi'] = {'value': current_rsi, 'score': 1, 'reason': 'Bullish territory (30-45)'}
+                elif 55 <= current_rsi <= 70:
+                    score -= 1
+                    breakdown['rsi'] = {'value': current_rsi, 'score': -1, 'reason': 'Bearish territory (55-70)'}
+                else:
+                    breakdown['rsi'] = {'value': current_rsi, 'score': 0, 'reason': 'Neutral (45-55)'}
+            elif current_rsi is not None and is_long_term:
+                breakdown['rsi'] = {'value': current_rsi, 'score': 0, 'reason': 'RSI not used for long-term analysis (>200 days)'}
+            
+            # MACD Scoring
+            if current_macd is not None and current_signal is not None:
+                if current_macd > current_signal:
+                    score += 2
+                    breakdown['macd'] = {'macd': current_macd, 'signal': current_signal, 'score': 2, 'reason': 'Bullish crossover (MACD > Signal)'}
+                else:
+                    score -= 2
+                    breakdown['macd'] = {'macd': current_macd, 'signal': current_signal, 'score': -2, 'reason': 'Bearish crossover (MACD < Signal)'}
+            
+            # Moving Average Scoring
+            if sma_20 is not None:
+                if current_price > sma_20:
+                    score += 1
+                    breakdown['sma_20'] = {'price': current_price, 'sma': sma_20, 'score': 1, 'reason': 'Price above SMA 20'}
+                else:
+                    score -= 1
+                    breakdown['sma_20'] = {'price': current_price, 'sma': sma_20, 'score': -1, 'reason': 'Price below SMA 20'}
+            
+            if sma_50 is not None:
+                if current_price > sma_50:
+                    score += 1
+                    breakdown['sma_50'] = {'price': current_price, 'sma': sma_50, 'score': 1, 'reason': 'Price above SMA 50'}
+                else:
+                    score -= 1
+                    breakdown['sma_50'] = {'price': current_price, 'sma': sma_50, 'score': -1, 'reason': 'Price below SMA 50'}
+            
+            if sma_200 is not None:
+                if current_price > sma_200:
+                    score += 1
+                    breakdown['sma_200'] = {'price': current_price, 'sma': sma_200, 'score': 1, 'reason': 'Price above SMA 200 (long-term bullish)'}
+                else:
+                    score -= 1
+                    breakdown['sma_200'] = {'price': current_price, 'sma': sma_200, 'score': -1, 'reason': 'Price below SMA 200 (long-term bearish)'}
+            
+            # Volume scoring (if available)
+            if 'volume' in df.columns and not df['volume'].isna().all():
+                avg_volume = df['volume'].tail(20).mean()
+                current_volume = current_row.get('volume', 0)
+                if current_volume > avg_volume * 1.2:
+                    score += 1
+                    breakdown['volume'] = {'current': current_volume, 'avg': avg_volume, 'score': 1, 'reason': 'Above average volume (+20%)'}
+                elif current_volume < avg_volume * 0.8:
+                    score -= 1
+                    breakdown['volume'] = {'current': current_volume, 'avg': avg_volume, 'score': -1, 'reason': 'Below average volume (-20%)'}
+                else:
+                    breakdown['volume'] = {'current': current_volume, 'avg': avg_volume, 'score': 0, 'reason': 'Normal volume'}
+            
+            # Determine signal based on score
+            if score >= 3:
+                technical_signal = "buy"
+                confidence = min(0.9, 0.5 + (score - 3) * 0.1)
+            elif score <= -3:
+                technical_signal = "sell"
+                confidence = min(0.9, 0.5 + abs(score + 3) * 0.1)
+            else:
+                technical_signal = "hold"
+                confidence = 0.3 + abs(score) * 0.1
+            
+            result = {
+                "technical_signal": technical_signal,
+                "confidence": round(confidence, 2),
+                "score": score,
+                "breakdown": breakdown,
+                "reasoning": f"Score: {score}. " + (
+                    f"Strong bullish signals dominate (score >= 3)" if score >= 3 else
+                    f"Strong bearish signals dominate (score <= -3)" if score <= -3 else
+                    f"Mixed or neutral signals (score between -2 and 2)"
+                ),
+                "indicators_used": list(breakdown.keys()),
+                "price_info": {
+                    "current_price": current_price,
+                    "vs_currency": vs_currency,
+                    "analysis_period": f"{days} days"
+                }
+            }
+            
+            print(f"✅ [DEBUG] Deterministic signal calculated: {technical_signal} (score: {score}, confidence: {confidence})")
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            error_result = {
+                "technical_signal": "hold",
+                "confidence": 0.0,
+                "score": 0,
+                "error": f"Error calculating deterministic signal: {str(e)}",
+                "reasoning": "Error in calculation, defaulting to hold"
+            }
+            print(f"❌ [DEBUG] Error in deterministic signal calculation: {str(e)}")
+            return json.dumps(error_result, indent=2)

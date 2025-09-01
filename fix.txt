@@ -1,7 +1,7 @@
 otimizar chamadas a api
 criar outros tipos de função
 performance em tempo
-dados obtiveis x dados pensados
-pensamento da analise
 implementar analise grafista a analise singular
-oq define o technical sign
+oq define o technical sign = algoritimo + validação da ia
+resistencias e suportes
+medias q devem ser usadas

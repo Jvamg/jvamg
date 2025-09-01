@@ -187,6 +187,14 @@ Impacto esperado:
 
 ## Seção do Agente (fora do escopo principal)
 
+#### Atualização: Resumo inclui nota de padrão gráfico
+- Data: Setembro 2025
+- Arquivo: `src/agente/app.py`
+- Mudança: As instruções do agente agora exigem que `thoughts.summary` inclua uma nota curta sobre padrões gráficos detectados:
+  - Se `obtainable.patterns_found_count > 0`: mencionar o padrão mais relevante da lista `obtainable.patterns_sample` (ex.: H&S/OCO, OCOI, DT/DB, TT/TB) e sua implicação típica (bullish/bearish/neutral)
+  - Se nenhum padrão for encontrado: declarar explicitamente "No chart pattern detected"
+  - Deve ser apenas uma frase curta
+
 ### Atualização: Métricas de Tokens no JSON de Saída
 - **Data**: Janeiro 2025
 - **Arquivo**: `src/agente/app.py`
@@ -260,6 +268,25 @@ Impacto esperado:
   - Atualização: Normalização de payload para filtro de categoria consistente independentemente da estrutura da resposta e omissão do parâmetro `api_key` quando não configurado
   - Atualização: `get_latest_articles` agora usa limite mínimo de 15 itens por padrão para melhorar análise de sentimento
   - Atualização: parâmetro de query ajustado para `categories` (padrão oficial CoinDesk). O envio de `categories` só ocorre quando `category` é fornecido pelo usuário
+
+- `src/agente/patternsToolKit.py`: **NOVO ✅** - Toolkit de detecção de padrões gráficos (H&S, DT/DB, TT/TB) para um único ativo
+  
+  **Objetivo**: Usar a lógica existente em `src/patterns/OCOs/necklineconfirmada.py` sem iterar por toda a lista `Config.TICKERS`. Aceita apenas a entrada do usuário (mesmo ativo selecionado no Streamlit/API) e detecta padrões nesse único ativo.
+  
+  **Funções Disponíveis**:
+  - `detect_patterns(coin_id, vs_currency='usd', term_type='short', patterns='ALL', strategies=None, intervals=None, period=None, save_csv=False, output_csv=None)`
+    - Mapeia `term_type` para estratégias/intervalos e período padrão
+    - Executa somente para o `coin_id` informado
+    - Retorna JSON com resumo (`found_count`, amostra, erros) e opcionalmente salva CSV
+  
+  **Integração no Agent**:
+  - Registrado no `src/agente/app.py` junto aos outros toolkits
+  - Disponível para o agente utilizar quando requisitado pelo fluxo
+  
+  **Notas Técnicas**:
+  - Carregamento dinâmico do módulo `necklineconfirmada.py` (sem alterar PYTHONPATH)
+  - Respeita `Config.DATA_PERIOD` e estratégias/intervalos existentes
+  - Não altera a lógica original de detecção/validação; apenas limita o escopo a um único ativo
 
 ### Configuração do Agente (ATUALIZADO: Agent + CLI JSON)
 - `src/agente/app.py`: Agent interno + dispatcher + CLI (sem servidor)
@@ -684,3 +711,10 @@ else:
 - Dependências permanecem as mesmas (`requirements.txt` inalterado)
 - Configuração via variáveis de ambiente permanece idêntica
 - **Sistema de debug pode ser desabilitado** removendo os prints de debug se necessário para produção
+
+#### Atualização: Saída sempre em inglês
+- Data: Setembro 2025
+- Arquivo: `src/agente/app.py`
+- Mudança: Reinserida a instrução para o agente produzir sempre a saída em **inglês**.
+  - Instruções do agente: adicionada linha "LANGUAGE: Always write ALL outputs in ENGLISH only."
+  - Prompt: adicionada linha "LANGUAGE: Always respond in ENGLISH only."

@@ -79,7 +79,7 @@ def analyze_crypto(coin_id: str, vs_currency: str, term_type: str) -> Dict[str, 
             "term_type": term_type
         }
         
-        response = requests.post(f"{API_BASE_URL}/analyze", json=payload, timeout=120)
+        response = requests.post(f"{API_BASE_URL}/analyze", json=payload, timeout=300)
         
         if response.status_code == 200:
             return response.json()
@@ -115,9 +115,18 @@ def display_analysis_results(data: Dict[str, Any]):
         )
     
     with col3:
+        # Handle null technical_signal (when agent rejects deterministic result)
+        tech_signal = thoughts.get('technical_signal')
+        if tech_signal is None:
+            signal_display = "REJECTED"
+            signal_color = "🔄"
+        else:
+            signal_display = tech_signal.upper()
+            signal_color = "🎯"
+        
         st.metric(
             label="Technical Signal",
-            value=thoughts.get('technical_signal', 'N/A').upper(),
+            value=f"{signal_color} {signal_display}",
             delta=None
         )
     
