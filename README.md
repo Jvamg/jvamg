@@ -69,9 +69,9 @@ To maintain technical honesty and clarity for recruiters, below is a transparent
 ## 🌐 Languages
 
 * **Portuguese:** Native
-* **English:** Fluent
-* **Spanish:** Elementary
-* **German:** Elementary
+* **English:** C1 - Advanced
+* **Spanish:** B1 - Intermediate
+* **German:** A2 - Elementary
 
 ---
 
