@@ -9,7 +9,7 @@
 
 Undergraduate student in **Artificial Intelligence & Data Science** at Universidade Federal Fluminense (UFF), with a technical diploma in Information Technology from Instituto Federal Fluminense (IFF).
 
-Focused on **Python development**, **data analysis**, **algorithmic problem solving**, and applied **machine learning**. I build practical tools ranging from quantitative market analysis and numerical simulations to containerized backend APIs. Open to **Data Science / Machine Learning Internship** and **Junior Python Backend** opportunities (Remote or Rio de Janeiro region).
+Focused on **Python development**, **data analysis**, **algorithmic problem solving**, and applied **machine learning**. Open to **Data Science / Machine Learning Internship** and **Junior Python Backend** opportunities (Remote or Rio de Janeiro region).
 
 ---
 
@@ -51,46 +51,6 @@ To maintain technical honesty and clarity for recruiters, below is a transparent
 * **Frontend & Real-Time:** React, TypeScript, WebSockets
 * **ORM & Database Migrations:** SQLModel, Alembic
 
----
-
-## 📌 Featured Projects
-
-### 📈 [financial-pattern-scanner](https://github.com/Jvamg/financial-pattern-scanner)
-> **Quantitative technical chart pattern detection engine in Python.**
-
-* **Stack:** Python, NumPy, Pandas, `pandas-ta`, `yfinance`
-* **Overview:** Algorithmic quantitative analysis engine for detecting, validating, and scoring classical chart patterns (Head and Shoulders, Inverse Head and Shoulders, Double/Triple Tops and Bottoms) across financial and cryptocurrency market data.
-* **Key Highlights:**
-  * **Dynamic ZigZag Swing Engine:** Identifies multi-scale peaks and valleys across customizable rolling windows and deviation thresholds.
-  * **Real-Time "Ghost Pivot" Synthesis:** Evaluates candidate pivots on live candles to test neckline retests and pattern integrity prior to completion.
-  * **Multi-Factor Scoring:** Combines structural geometry checks with technical indicators (ATR-calibrated thresholds, RSI divergence, MACD histogram crossovers, and OBV volume profiling).
-  * **Ingestion Pipeline:** Automated Yahoo Finance ingestion with retry backoffs and custom OHLCV timeframe resampling.
-
-### 🎓 [ClassPulse](https://github.com/Jvamg-Bsf-Org/ClassPulse) *(HackTudo 2026)*
-> **Real-time classroom focus and engagement platform.** · [Live Demo](https://classpulse-app.up.railway.app/)
-
-* **Team Stack:** Python, FastAPI, PostgreSQL, WebSockets, SQLModel, Alembic, Docker, React, TypeScript
-* **Overview:** A web platform that helps teachers manage smartphone usage in classrooms productively without confiscating devices. Combines a Focus Mode (confirming phone orientation/movement via browser sensors in real time) with an Activity Mode for live, interactive quizzes.
-* **Context & Contribution:** Collaborative project developed for HackTudo 2026. Contributed to backend API development, data modeling, and service logic using Python and FastAPI.
-
-### 🔐 [steganography-api](https://github.com/Jvamg-Bsf-Org/steganography-api)
-> **REST microservice for image steganography using Least Significant Bit (LSB) encoding.**
-
-* **Stack:** Python, FastAPI, Pillow, NumPy, Cryptography, Docker
-* **Overview:** An asynchronous RESTful API service for encoding and decoding covert messages inside images without noticeable degradation in visual quality.
-* **Key Highlights:**
-  * **Vectorized Bitwise Operations:** Employs NumPy array manipulation and bit masking for efficient payload embedding and extraction.
-  * **Payload Security:** Integrates Fernet symmetric encryption (AES-128-CBC with HMAC authentication) for pre-encoding confidentiality.
-  * **Robust Handling:** Delimiter sentinels, payload capacity verification, and lossless streaming PNG delivery through FastAPI endpoints.
-
-### 🎯 [monte-carlo-pi-estimator](https://github.com/Jvamg/monte-carlo-pi-estimator)
-> **Numerical simulation and vectorization performance benchmark.**
-
-* **Stack:** Python, NumPy, Matplotlib, Jupyter Notebook
-* **Overview:** A computational physics and data project estimating the mathematical constant $\pi$ through 2D (inscribed circle) and 3D (inscribed sphere) Monte Carlo random sampling.
-* **Key Highlights:**
-  * **Benchmarking:** Quantifies performance differences between pure Python iterative loops and NumPy vectorized matrix operations over 100,000+ iterations.
-  * **Scientific Computing:** Demonstrates how matrix vectorization and SIMD-friendly memory access eliminate Python loop overhead in data-intensive tasks.
 
 ---
 
